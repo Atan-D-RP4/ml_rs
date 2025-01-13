@@ -78,8 +78,8 @@ fn train_model(data_set: &[[f32; 3]]) -> (Vec<f32>, f32) {
 }
 
 pub fn gates() -> Result<(), Box<dyn std::error::Error>> {
-    let model_and = train_model(&TRAINING_SET_AND);
-    let model_or = train_model(&TRAINING_SET_OR);
-    let model_nand = train_model(&TRAINING_SET_NAND);
+    let _model_and = train_model(&TRAINING_SET_AND);
+    let _model_or = train_model(&TRAINING_SET_OR);
+    let _model_nand = train_model(&TRAINING_SET_NAND);
     Ok(())
 }
