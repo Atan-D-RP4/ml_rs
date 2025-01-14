@@ -1,3 +1,39 @@
+// Usage Example
+//
+// let matrix_a = Matrix::<f32>::from_vec(vec![1.0, 2.0], 1, 2).unwrap();
+// let matrix_b = Matrix::<f32>::from_vec(vec![3.0, 4.0, 3.0, 4.0], 2, 2).unwrap();
+// let matrix_c = (matrix_a * matrix_b).unwrap();
+// println!("{}", matrix_c);
+//
+// let matrix_a = matrix![[1, 2], [2, 2]];
+// let or_data = matrix![
+//     [0.0, 0.0, 0.0],
+//     [0.0, 1.0, 1.0],
+//     [1.0, 0.0, 1.0],
+//     [1.0, 1.0, 1.0],
+// ];
+// let matrix_b = Matrix::from_vec2(vec![vec![1, 2], vec![3, 4]]).unwrap();
+// println!("{}", (matrix_a * matrix_b).unwrap());
+// println!("{}", or_data);
+//
+// let (x, y) = or_data.split_vert(4).unwrap_or_else(|e| {
+//     println!("{:?}", e);
+//     (Matrix::new(0, 0), Matrix::new(0, 0))
+// });
+// println!("{}", x);
+// println!("{}", y);
+//
+// let (x, y) = or_data.split_horz(4).unwrap_or_else(|e| {
+//     println!("{:?}", e);
+//     (Matrix::new(0, 0), Matrix::new(0, 0))
+// });
+// println!("{}", x);
+// println!("{}", y);
+//
+// let matrix = matrix!(gen 10, 10, || rand::thread_rng().gen_range(0..10));
+// println!("{}", matrix);
+//
+// NOTE: This entire thing is overcomplicated as hell
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
@@ -25,6 +61,9 @@ pub trait MatrixElement:
     Clone
     + Default
     + Debug
+    + Copy
+    + PartialOrd
+    + PartialEq
     + Add<Output = Self>
     + AddAssign
     + Sub<Output = Self>
@@ -55,14 +94,14 @@ macro_rules! impl_matrix_element {
 
 impl_matrix_element!(f32, f64, i32, i64);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Matrix<T: MatrixElement> {
-    data: Vec<T>,
+    pub data: Vec<T>,
     rows: usize,
     cols: usize,
 }
 
-impl<T: MatrixElement + PartialOrd + PartialEq> Matrix<T> {
+impl<T: MatrixElement> Matrix<T> {
     pub fn new(rows: usize, cols: usize) -> Self {
         let data = vec![T::zero(); rows * cols];
         Matrix { data, rows, cols }
@@ -153,10 +192,22 @@ impl<T: MatrixElement + PartialOrd + PartialEq> Matrix<T> {
         }
         Ok((top, bottom))
     }
+
+    pub fn iter_rows(&self) -> impl Iterator<Item = &[T]> {
+        self.data.chunks(self.cols)
+    }
+
+    pub fn iter_cols(&self) -> impl Iterator<Item = Vec<T>> + use<'_, T> {
+        (0..self.cols).map(move |i| {
+            (0..self.rows)
+                .map(move |j| self[(j, i)].clone())
+                .collect::<Vec<T>>()
+        })
+    }
 }
 
 // Algebraic Operations
-impl<T: MatrixElement + PartialOrd + PartialEq> Matrix<T> {
+impl<T: MatrixElement> Matrix<T> {
     pub fn identity(size: usize) -> Self {
         let mut matrix = Self::new(size, size);
         for i in 0..size {
@@ -315,7 +366,6 @@ impl<T: MatrixElement + PartialOrd + PartialEq> Matrix<T> {
     }
 }
 
-// OPERATOR OVERLOADS
 // Implement indexing operations
 impl<T: MatrixElement> std::ops::Index<(usize, usize)> for Matrix<T> {
     type Output = T;
@@ -331,8 +381,24 @@ impl<T: MatrixElement> std::ops::IndexMut<(usize, usize)> for Matrix<T> {
     }
 }
 
+// Implement Dereference trait
+impl<T: MatrixElement> std::ops::Deref for Matrix<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl<T: MatrixElement> std::ops::DerefMut for Matrix<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data
+    }
+}
+
+// OPERATOR OVERLOADS
 // Implement matrix addition
-impl<T: MatrixElement + PartialEq + PartialOrd> Add for Matrix<T> {
+impl<T: MatrixElement> Add for Matrix<T> {
     type Output = Result<Matrix<T>, MatrixError>;
 
     fn add(self, other: Self) -> Self::Output {
@@ -354,7 +420,7 @@ impl<T: MatrixElement + PartialEq + PartialOrd> Add for Matrix<T> {
 }
 
 // Implement matrix subtraction
-impl<T: MatrixElement + PartialOrd> Sub for Matrix<T> {
+impl<T: MatrixElement> Sub for Matrix<T> {
     type Output = Result<Matrix<T>, MatrixError>;
 
     fn sub(self, other: Self) -> Self::Output {
@@ -384,7 +450,7 @@ impl<T: MatrixElement + PartialOrd> Mul for Matrix<T> {
     }
 }
 
-impl<T: MatrixElement + PartialOrd + PartialEq> TryFrom<Vec<Vec<T>>> for Matrix<T> {
+impl<T: MatrixElement> TryFrom<Vec<Vec<T>>> for Matrix<T> {
     type Error = MatrixError;
 
     fn try_from(data: Vec<Vec<T>>) -> Result<Self, Self::Error> {
@@ -427,6 +493,18 @@ macro_rules! matrix {
         compile_error!("Matrix cannot have empty rows")
     };
 
+    // Array initialization syntax: [[expr; cols]; rows]
+    ([[$(($init:expr)),+; $cols:expr]; $rows:expr]) => {{
+        let data: Vec<Vec<_>> = vec![vec![$($init),+; $cols]; $rows];
+        Matrix::try_from(data).expect("Failed to create matrix")
+    }};
+
+    // Direct value syntax: [[1, 2], [3, 4]]
+    ($([$($x:expr),* $(,)*]),+ $(,)*) => {{
+        let data: Vec<Vec<_>> = vec![$(vec![$($x),*]),+];
+        Matrix::try_from(data).expect("Failed to create matrix")
+    }};
+
     // Match matrix with rows
     ($([$($x:expr),* $(,)*]),+ $(,)*) => {{
         {
@@ -441,6 +519,19 @@ macro_rules! matrix {
             Matrix::try_from(temp).expect("Failed to create matrix")
         }
     }};
+
+    // Match a generator expression
+    (gen $rows:expr, $cols:expr, $gen:expr) => {{
+        {
+            let mut data = Vec::with_capacity($rows * $cols);
+            for _ in 0..$rows {
+                for _ in 0..$cols {
+                    data.push($gen());
+                }
+            }
+            Matrix::from_vec(data, $rows, $cols).expect("Failed to create matrix")
+        }
+    }};
 }
 
 impl<T: Debug + MatrixElement> std::fmt::Display for Matrix<T> {
@@ -452,5 +543,91 @@ impl<T: Debug + MatrixElement> std::fmt::Display for Matrix<T> {
             writeln!(f)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn test_matrix_macro() {
+        let matrix = matrix![[1, 2, 3], [4, 5, 6], [7, 8, 9],];
+        assert_eq!(matrix.rows, 3);
+        assert_eq!(matrix.cols, 3);
+    }
+
+    #[test]
+    fn test_matrix_addition() {
+        let matrix_a = matrix![[1, 2, 3], [4, 5, 6], [7, 8, 9],];
+        let matrix_b = matrix![[9, 8, 7], [6, 5, 4], [3, 2, 1],];
+        let result = matrix_a + matrix_b;
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert_eq!(result[(0, 0)], 10);
+        assert_eq!(result[(1, 1)], 10);
+        assert_eq!(result[(2, 2)], 10);
+    }
+
+    #[test]
+    fn test_matrix_subtraction() {
+        let matrix_a = matrix![[1, 2, 3], [4, 5, 6], [7, 8, 9],];
+        let matrix_b = matrix![[9, 8, 7], [6, 5, 4], [3, 2, 1],];
+        let result = matrix_a - matrix_b;
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert_eq!(result[(0, 0)], -8);
+        assert_eq!(result[(1, 1)], 0);
+        assert_eq!(result[(2, 2)], 8);
+    }
+
+    #[test]
+    fn test_matrix_multiplication() {
+        let matrix_a = matrix![[1, 2, 3], [4, 5, 6], [7, 8, 9],];
+        let matrix_b = matrix![[9, 8, 7], [6, 5, 4], [3, 2, 1],];
+        let result = matrix_a * matrix_b;
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        let expected = matrix![[30, 24, 18], [84, 69, 54], [138, 114, 90],];
+        for i in 0..3 {
+            for j in 0..3 {
+                assert_eq!(result[(i, j)], expected[(i, j)]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_matrix_transpose() {
+        let matrix = matrix![[1, 2, 3], [4, 5, 6], [7, 8, 9],];
+        let result = matrix.transpose();
+        assert_eq!(result[(0, 0)], 1);
+        assert_eq!(result[(1, 0)], 2);
+        assert_eq!(result[(2, 0)], 3);
+        assert_eq!(result[(0, 1)], 4);
+        assert_eq!(result[(1, 1)], 5);
+        assert_eq!(result[(2, 1)], 6);
+        assert_eq!(result[(0, 2)], 7);
+        assert_eq!(result[(1, 2)], 8);
+        assert_eq!(result[(2, 2)], 9);
+    }
+
+    #[test]
+    fn test_matrix_split() {
+        let matrix = matrix![
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            [9, 10, 11, 12],
+            [13, 14, 15, 16],
+        ];
+        let (top, bottom) = matrix.split_horz(2).unwrap();
+        assert_eq!(top.rows, 2);
+        assert_eq!(top.cols, 4);
+        assert_eq!(bottom.rows, 2);
+        assert_eq!(bottom.cols, 4);
+
+        let (left, right) = matrix.split_vert(2).unwrap();
+        assert_eq!(left.rows, 4);
+        assert_eq!(left.cols, 2);
+        assert_eq!(right.rows, 4);
+        assert_eq!(right.cols, 2);
     }
 }
