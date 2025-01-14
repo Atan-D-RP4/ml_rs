@@ -1,25 +1,21 @@
+use ndarray::{Array1, Array2, Axis};
 use rand::Rng;
-use std::ops::{Index, IndexMut};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Activation {
     Sigmoid,
-    Relu(f32),
+    Relu,
     Tanh,
     Sin,
 }
+
+const RELU_PARAM: f32 = 0.01;
 
 impl Activation {
     fn forward(&self, x: f32) -> f32 {
         match self {
             Activation::Sigmoid => 1.0 / (1.0 + (-x).exp()),
-            Activation::Relu(param) => {
-                if x > 0.0 {
-                    x
-                } else {
-                    x * param
-                }
-            }
+            Activation::Relu => if x > 0.0 { x } else { x * RELU_PARAM },
             Activation::Tanh => x.tanh(),
             Activation::Sin => x.sin(),
         }
@@ -28,333 +24,179 @@ impl Activation {
     fn derivative(&self, y: f32) -> f32 {
         match self {
             Activation::Sigmoid => y * (1.0 - y),
-            Activation::Relu(param) => {
-                if y >= 0.0 {
-                    1.0
-                } else {
-                    *param
-                }
-            }
+            Activation::Relu => if y >= 0.0 { 1.0 } else { RELU_PARAM },
             Activation::Tanh => 1.0 - y * y,
             Activation::Sin => (y.asin()).cos(),
         }
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Matrix {
-    rows: usize,
-    cols: usize,
-    elements: Vec<f32>,
+#[derive(Debug)]
+pub struct Layer {
+    weights: Array2<f32>,
+    biases: Array1<f32>,
+    activation: Activation,
 }
 
-impl Matrix {
-    pub fn new(rows: usize, cols: usize) -> Self {
-        Self {
-            rows,
-            cols,
-            elements: vec![0.0; rows * cols],
-        }
-    }
-
-    pub fn from_slice(rows: usize, cols: usize, elements: &[f32]) -> Self {
-        assert_eq!(elements.len(), rows * cols);
-        Self {
-            rows,
-            cols,
-            elements: elements.to_vec(),
-        }
-    }
-
-    pub fn fill(&mut self, value: f32) {
-        self.elements.fill(value);
-    }
-
-    pub fn randomize(&mut self, low: f32, high: f32) {
+impl Layer {
+    pub fn new(input_size: usize, output_size: usize, activation: Activation) -> Self {
         let mut rng = rand::thread_rng();
-        for element in &mut self.elements {
-            *element = rng.gen::<f32>() * (high - low) + low;
+
+        let weights = Array2::from_shape_fn((output_size, input_size), |_| {
+            rng.gen_range(-1.0..1.0)
+        });
+
+        let biases = Array1::zeros(output_size);
+
+        Self {
+            weights,
+            biases,
+            activation,
         }
     }
 
-    pub fn dot(&self, other: &Matrix) -> Matrix {
-        assert_eq!(self.cols, other.rows);
-        let mut result = Matrix::new(self.rows, other.cols);
-
-        for i in 0..self.rows {
-            for j in 0..other.cols {
-                let mut sum = 0.0;
-                for k in 0..self.cols {
-                    sum += self[(i, k)] * other[(k, j)];
-                }
-                result[(i, j)] = sum;
-            }
-        }
-        result
-    }
-
-    pub fn add(&mut self, other: &Matrix) {
-        assert_eq!(self.rows, other.rows);
-        assert_eq!(self.cols, other.cols);
-
-        for i in 0..self.elements.len() {
-            self.elements[i] += other.elements[i];
-        }
-    }
-
-    pub fn apply_activation(&mut self, activation: Activation) {
-        for element in &mut self.elements {
-            *element = activation.forward(*element);
-        }
-    }
-
-    pub fn row(&self, index: usize) -> MatrixRow {
-        assert!(index < self.rows);
-        MatrixRow {
-            cols: self.cols,
-            elements: &self.elements[index * self.cols..(index + 1) * self.cols],
-        }
-    }
-
-    pub fn row_mut(&mut self, index: usize) -> MatrixRowMut {
-        assert!(index < self.rows);
-        let cols = self.cols;
-        MatrixRowMut {
-            cols,
-            elements: &mut self.elements[index * cols..(index + 1) * cols],
-        }
-    }
-}
-
-impl Index<(usize, usize)> for Matrix {
-    type Output = f32;
-
-    fn index(&self, (row, col): (usize, usize)) -> &Self::Output {
-        assert!(row < self.rows && col < self.cols);
-        &self.elements[row * self.cols + col]
-    }
-}
-
-impl IndexMut<(usize, usize)> for Matrix {
-    fn index_mut(&mut self, (row, col): (usize, usize)) -> &mut Self::Output {
-        assert!(row < self.rows && col < self.cols);
-        &mut self.elements[row * self.cols + col]
-    }
-}
-
-#[derive(Debug)]
-pub struct MatrixRow<'a> {
-    cols: usize,
-    elements: &'a [f32],
-}
-
-#[derive(Debug)]
-pub struct MatrixRowMut<'a> {
-    cols: usize,
-    elements: &'a mut [f32],
-}
-
-pub struct MatrixCol<'a> {
-    rows: usize,
-    elements: &'a [f32],
-}
-
-pub struct MatrixColMut<'a> {
-    rows: usize,
-    elements: &'a mut [f32],
-}
-
-impl<'a> MatrixRow<'a> {
-    pub fn slice(&self, start: usize, len: usize) -> MatrixRow {
-        assert!(start + len <= self.cols);
-        MatrixRow {
-            cols: len,
-            elements: &self.elements[start..start + len],
-        }
-    }
-}
-
-impl<'a> MatrixRowMut<'a> {
-    pub fn slice(&mut self, start: usize, len: usize) -> MatrixRowMut {
-        assert!(start + len <= self.cols);
-        MatrixRowMut {
-            cols: len,
-            elements: &mut self.elements[start..start + len],
-        }
-    }
-}
-
-impl<'a> MatrixCol<'a> {
-    pub fn slice(&self, start: usize, len: usize) -> MatrixCol {
-        assert!(start + len <= self.rows);
-        MatrixCol {
-            rows: len,
-            elements: &self.elements[start..start + len],
-        }
-    }
-}
-
-impl<'a> MatrixColMut<'a> {
-    pub fn slice(&mut self, start: usize, len: usize) -> MatrixColMut {
-        assert!(start + len <= self.rows);
-        MatrixColMut {
-            rows: len,
-            elements: &mut self.elements[start..start + len],
-        }
+    pub fn forward(&self, input: &Array1<f32>) -> Array1<f32> {
+        let mut output = self.weights.dot(input);
+        output += &self.biases;
+        output.mapv_inplace(|x| self.activation.forward(x));
+        output
     }
 }
 
 #[derive(Debug)]
 pub struct NeuralNetwork {
-    pub architecture: Vec<usize>,
-    pub weights: Vec<Matrix>,
-    pub biases: Vec<Matrix>,
-    pub activations: Vec<Matrix>,
-    pub activation_fn: Activation,
+    layers: Vec<Layer>,
+    activations: Vec<Array1<f32>>,
 }
 
 impl NeuralNetwork {
     pub fn new(architecture: &[usize], activation: Activation) -> Self {
-        assert!(architecture.len() >= 2);
+        assert!(architecture.len() >= 2, "Network must have at least input and output layers");
 
-        let mut weights = Vec::new();
-        let mut biases = Vec::new();
-        let mut activations = Vec::new();
-
-        // Initialize activations for each layer
-        for &size in architecture {
-            activations.push(Matrix::new(1, size));
+        let mut layers = Vec::new();
+        for window in architecture.windows(2) {
+            layers.push(Layer::new(window[0], window[1], activation));
         }
 
-        // Initialize weights and biases between layers
-        for i in 0..architecture.len() - 1 {
-            weights.push(Matrix::new(architecture[i], architecture[i + 1]));
-            biases.push(Matrix::new(1, architecture[i + 1]));
-        }
+        let activations = architecture.iter()
+            .map(|&size| Array1::zeros(size))
+            .collect();
 
         Self {
-            architecture: architecture.to_vec(),
-            weights,
-            biases,
+            layers,
             activations,
-            activation_fn: activation,
         }
     }
 
-    pub fn randomize(&mut self, low: f32, high: f32) {
-        for weight in &mut self.weights {
-            weight.randomize(low, high);
-        }
-        for bias in &mut self.biases {
-            bias.randomize(low, high);
-        }
-    }
-
-    pub fn predict(&mut self, input: &[f32]) -> &Matrix {
-        self.forward(&input);
-        self.activations.last().unwrap()
-    }
-
-    pub fn forward(&mut self, input: &[f32]) {
-        assert_eq!(input.len(), self.architecture[0]);
+    pub fn forward(&mut self, input: &[f32]) -> &Array1<f32> {
+        assert_eq!(input.len(), self.activations[0].len(),
+            "Input size does not match network architecture");
 
         // Set input layer
-        self.activations[0].elements.copy_from_slice(input);
+        self.activations[0].assign(&Array1::from_vec(input.to_vec()));
 
-        // Forward propagation
-        for i in 0..self.weights.len() {
-            let activation = self.activations[i].dot(&self.weights[i]);
-            self.activations[i + 1] = activation;
-            self.activations[i + 1].add(&self.biases[i]);
-            self.activations[i + 1].apply_activation(self.activation_fn);
+        // Forward propagation through each layer
+        for i in 0..self.layers.len() {
+            let input = self.activations[i].clone();
+            self.activations[i + 1] = self.layers[i].forward(&input);
         }
+
+        // Return reference to output layer
+        &self.activations[self.activations.len() - 1]
     }
 
-    pub fn cost(&mut self, training_data: &[(Vec<f32>, Vec<f32>)]) -> f32 {
-        let mut total_cost = 0.0;
+    pub fn train(&mut self, training_data: &[(Vec<f32>, Vec<f32>)],
+                 learning_rate: f32, batch_size: usize) -> f32 {
+        let mut total_loss = 0.0;
+        let num_samples = training_data.len();
 
-        for (input, target) in training_data {
-            self.forward(input);
-            let output = &self.activations.last().unwrap().elements;
+        for batch_start in (0..num_samples).step_by(batch_size) {
+            let batch_end = (batch_start + batch_size).min(num_samples);
+            let batch = &training_data[batch_start..batch_end];
 
-            for (out, target) in output.iter().zip(target.iter()) {
-                let diff = out - target;
-                total_cost += diff * diff;
+            // Accumulate gradients
+            let (weight_gradients, bias_gradients) = self.compute_gradients(batch);
+
+            // Update weights and biases
+            let batch_lr = learning_rate / batch.len() as f32;
+            for ((layer, weight_grad), bias_grad) in self.layers.iter_mut()
+                .zip(weight_gradients)
+                .zip(bias_gradients) {
+                layer.weights -= &(weight_grad * batch_lr);
+                layer.biases -= &(bias_grad * batch_lr);
             }
+
+            // Compute loss for this batch
+            total_loss += self.compute_loss(batch);
         }
 
-        total_cost / training_data.len() as f32
+        total_loss / num_samples as f32
     }
 
-    pub fn backpropagation(&mut self, training_data: &[(Vec<f32>, Vec<f32>)], learning_rate: f32) {
-        let batch_size = training_data.len();
-        let mut weight_gradients: Vec<Matrix> = self
-            .weights
-            .iter()
-            .map(|w| Matrix::new(w.rows, w.cols))
-            .collect();
-        let mut bias_gradients: Vec<Matrix> = self
-            .biases
-            .iter()
-            .map(|b| Matrix::new(b.rows, b.cols))
+    fn compute_gradients(&mut self, batch: &[(Vec<f32>, Vec<f32>)])
+        -> (Vec<Array2<f32>>, Vec<Array1<f32>>) {
+
+        let mut weight_gradients: Vec<Array2<f32>> = self.layers.iter()
+            .map(|layer| Array2::zeros(layer.weights.raw_dim()))
             .collect();
 
-        for (input, target) in training_data {
+        let mut bias_gradients: Vec<Array1<f32>> = self.layers.iter()
+            .map(|layer| Array1::zeros(layer.biases.raw_dim()))
+            .collect();
+
+        for (input, target) in batch {
+            // Forward pass
             self.forward(input);
 
-            // Calculate output layer error
-            let mut deltas = vec![Matrix::new(1, self.architecture.last().unwrap().clone())];
-            let output_layer = self.activations.last().unwrap();
+            // Backward pass
+            let mut delta = {
+                let output = self.activations.last().unwrap();
+                let target = Array1::from_vec(target.clone());
+                let mut delta = output - &target;
+                delta *= &output.mapv(|y|
+                    self.layers.last().unwrap().activation.derivative(y));
+                delta
+            };
 
-            for j in 0..output_layer.cols {
-                let output = output_layer[(0, j)];
-                let error = output - target[j];
-                deltas[0][(0, j)] = error * self.activation_fn.derivative(output);
-            }
+            // Propagate error backwards through the network
+            for layer_idx in (0..self.layers.len()).rev() {
+                let layer = &self.layers[layer_idx];
+                let input = &self.activations[layer_idx];
 
-            // Backpropagate error
-            for layer in (0..self.weights.len()).rev() {
-                let delta = &deltas[0];
+                // Compute gradients for this layer
+                let weight_grad = delta.clone().insert_axis(Axis(1)) * input.clone().insert_axis(Axis(0));
+                weight_gradients[layer_idx] += &weight_grad;
+                bias_gradients[layer_idx] += &delta;
 
-                // Calculate gradients
-                for i in 0..self.weights[layer].rows {
-                    for j in 0..self.weights[layer].cols {
-                        weight_gradients[layer][(i, j)] +=
-                            self.activations[layer][(0, i)] * delta[(0, j)];
-                    }
-                }
-
-                for j in 0..self.biases[layer].cols {
-                    bias_gradients[layer][(0, j)] += delta[(0, j)];
-                }
-
-                if layer > 0 {
-                    let mut new_delta = Matrix::new(1, self.architecture[layer]);
-                    for i in 0..new_delta.cols {
-                        let mut sum = 0.0;
-                        for j in 0..delta.cols {
-                            sum += self.weights[layer][(i, j)] * delta[(0, j)];
-                        }
-                        new_delta[(0, i)] = sum
-                            * self
-                                .activation_fn
-                                .derivative(self.activations[layer][(0, i)]);
-                    }
-                    deltas[0] = new_delta;
+                if layer_idx > 0 {
+                    // Compute delta for next layer back
+                    let next_delta = layer.weights.t().dot(&delta);
+                    delta = next_delta * &self.activations[layer_idx]
+                        .mapv(|y| self.layers[layer_idx-1].activation.derivative(y));
                 }
             }
         }
 
-        // Update weights and biases
-        let learning_rate = learning_rate / batch_size as f32;
-        for i in 0..self.weights.len() {
-            for j in 0..self.weights[i].elements.len() {
-                self.weights[i].elements[j] -= learning_rate * weight_gradients[i].elements[j];
-            }
-            for j in 0..self.biases[i].elements.len() {
-                self.biases[i].elements[j] -= learning_rate * bias_gradients[i].elements[j];
-            }
+        (weight_gradients, bias_gradients)
+    }
+
+    pub fn compute_loss(&mut self, batch: &[(Vec<f32>, Vec<f32>)]) -> f32 {
+        let mut loss = 0.0;
+
+        for (input, target) in batch {
+            let output = self.forward(input);
+            let target = Array1::from_vec(target.clone());
+            loss += output.iter()
+                .zip(target.iter())
+                .map(|(o, t)| (o - t).powi(2))
+                .sum::<f32>();
         }
+
+        loss / (2.0 * batch.len() as f32)
+    }
+
+    pub fn predict(&mut self, input: &[f32]) -> Vec<f32> {
+        self.forward(input).to_vec()
     }
 }
 
@@ -363,22 +205,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_matrix_operations() {
-        let mut m1 = Matrix::new(2, 3);
-        m1.fill(1.0);
-        let mut m2 = Matrix::new(3, 2);
-        m2.fill(2.0);
-
-        let result = m1.dot(&m2);
-        assert_eq!(result.rows, 2);
-        assert_eq!(result.cols, 2);
-        assert_eq!(result[(0, 0)], 6.0);
-    }
-
-    #[test]
-    fn test_neural_network() {
-        let mut nn = NeuralNetwork::new(&[2, 3, 1], Activation::Sigmoid);
-        nn.randomize(-1.0, 1.0);
+    fn test_xor() {
+        let mut nn = NeuralNetwork::new(&[2, 4, 1], Activation::Sigmoid);
 
         let training_data = vec![
             (vec![0.0, 0.0], vec![0.0]),
@@ -387,14 +215,22 @@ mod tests {
             (vec![1.0, 1.0], vec![0.0]),
         ];
 
-        let initial_cost = nn.cost(&training_data);
+        let initial_loss = nn.compute_loss(&training_data);
 
-        // Train for a few epochs
+        // Train for several epochs
         for _ in 0..1000 {
-            nn.backpropagation(&training_data, 0.1);
+            nn.train(&training_data, 0.1, 4);
         }
 
-        let final_cost = nn.cost(&training_data);
-        assert!(final_cost < initial_cost);
+        let final_loss = nn.compute_loss(&training_data);
+        assert!(final_loss < initial_loss);
+    }
+
+    #[test]
+    fn test_layer_forward() {
+        let layer = Layer::new(2, 1, Activation::Sigmoid);
+        let input = Array1::from_vec(vec![1.0, 1.0]);
+        let output = layer.forward(&input);
+        assert_eq!(output.len(), 1);
     }
 }
