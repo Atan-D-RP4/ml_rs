@@ -1,3 +1,4 @@
+pub mod nn;
 pub mod framework;
 pub mod matrix;
 pub mod simple_gates;
