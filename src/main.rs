@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // simple_series::simple_model();
 
     {
-        let mut nn = NeuralNetwork::new(&[2, 3, 1], Activation::Sigmoid);
+        let mut nn = NeuralNetwork::new(&[2, 2, 1, 1], Activation::Tanh);
         let xor_train = vec![
             (vec![0.0, 0.0], vec![0.0]),
             (vec![1.0, 0.0], vec![1.0]),
@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             for j in 0..2 {
                 let input = vec![i as f32, j as f32];
                 let output = nn.predict(&input);
-                println!("{:?} => {:?}", input, output);
+                println!("{:?} => {:?}", input, output.iter().map(|x| x.round()).collect::<Vec<_>>());
             }
         }
     }
