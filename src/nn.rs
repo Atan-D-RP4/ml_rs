@@ -1,5 +1,4 @@
-use rand::Rng;
-use std::ops::{Index, IndexMut};
+use crate::matrix::Matrix;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Activation {
@@ -41,165 +40,10 @@ impl Activation {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Matrix {
-    rows: usize,
-    cols: usize,
-    elements: Vec<f32>,
-}
-
-impl Matrix {
-    pub fn new(rows: usize, cols: usize) -> Self {
-        Self {
-            rows,
-            cols,
-            elements: vec![0.0; rows * cols],
-        }
-    }
-
-    pub fn from_slice(rows: usize, cols: usize, elements: &[f32]) -> Self {
-        assert_eq!(elements.len(), rows * cols);
-        Self {
-            rows,
-            cols,
-            elements: elements.to_vec(),
-        }
-    }
-
-    pub fn fill(&mut self, value: f32) {
-        self.elements.fill(value);
-    }
-
-    pub fn randomize(&mut self, low: f32, high: f32) {
-        let mut rng = rand::thread_rng();
-        for element in &mut self.elements {
-            *element = rng.gen::<f32>() * (high - low) + low;
-        }
-    }
-
-    pub fn dot(&self, other: &Matrix) -> Matrix {
-        assert_eq!(self.cols, other.rows);
-        let mut result = Matrix::new(self.rows, other.cols);
-
-        for i in 0..self.rows {
-            for j in 0..other.cols {
-                let mut sum = 0.0;
-                for k in 0..self.cols {
-                    sum += self[(i, k)] * other[(k, j)];
-                }
-                result[(i, j)] = sum;
-            }
-        }
-        result
-    }
-
-    pub fn add(&mut self, other: &Matrix) {
-        assert_eq!(self.rows, other.rows);
-        assert_eq!(self.cols, other.cols);
-
-        for i in 0..self.elements.len() {
-            self.elements[i] += other.elements[i];
-        }
-    }
-
+impl Matrix<f32> {
     pub fn apply_activation(&mut self, activation: Activation) {
         for element in &mut self.elements {
             *element = activation.forward(*element);
-        }
-    }
-
-    pub fn row(&self, index: usize) -> MatrixRow {
-        assert!(index < self.rows);
-        MatrixRow {
-            cols: self.cols,
-            elements: &self.elements[index * self.cols..(index + 1) * self.cols],
-        }
-    }
-
-    pub fn row_mut(&mut self, index: usize) -> MatrixRowMut {
-        assert!(index < self.rows);
-        let cols = self.cols;
-        MatrixRowMut {
-            cols,
-            elements: &mut self.elements[index * cols..(index + 1) * cols],
-        }
-    }
-}
-
-impl Index<(usize, usize)> for Matrix {
-    type Output = f32;
-
-    fn index(&self, (row, col): (usize, usize)) -> &Self::Output {
-        assert!(row < self.rows && col < self.cols);
-        &self.elements[row * self.cols + col]
-    }
-}
-
-impl IndexMut<(usize, usize)> for Matrix {
-    fn index_mut(&mut self, (row, col): (usize, usize)) -> &mut Self::Output {
-        assert!(row < self.rows && col < self.cols);
-        &mut self.elements[row * self.cols + col]
-    }
-}
-
-#[derive(Debug)]
-pub struct MatrixRow<'a> {
-    cols: usize,
-    elements: &'a [f32],
-}
-
-#[derive(Debug)]
-pub struct MatrixRowMut<'a> {
-    cols: usize,
-    elements: &'a mut [f32],
-}
-
-pub struct MatrixCol<'a> {
-    rows: usize,
-    elements: &'a [f32],
-}
-
-pub struct MatrixColMut<'a> {
-    rows: usize,
-    elements: &'a mut [f32],
-}
-
-impl<'a> MatrixRow<'a> {
-    pub fn slice(&self, start: usize, len: usize) -> MatrixRow {
-        assert!(start + len <= self.cols);
-        MatrixRow {
-            cols: len,
-            elements: &self.elements[start..start + len],
-        }
-    }
-}
-
-impl<'a> MatrixRowMut<'a> {
-    pub fn slice(&mut self, start: usize, len: usize) -> MatrixRowMut {
-        assert!(start + len <= self.cols);
-        MatrixRowMut {
-            cols: len,
-            elements: &mut self.elements[start..start + len],
-        }
-    }
-}
-
-impl<'a> MatrixCol<'a> {
-    pub fn slice(&self, start: usize, len: usize) -> MatrixCol {
-        assert!(start + len <= self.rows);
-        MatrixCol {
-            rows: len,
-            elements: &self.elements[start..start + len],
-        }
-    }
-}
-
-impl<'a> MatrixColMut<'a> {
-    pub fn slice(&mut self, start: usize, len: usize) -> MatrixColMut {
-        assert!(start + len <= self.rows);
-        MatrixColMut {
-            rows: len,
-            elements: &mut self.elements[start..start + len],
         }
     }
 }
@@ -207,9 +51,9 @@ impl<'a> MatrixColMut<'a> {
 #[derive(Debug)]
 pub struct NeuralNetwork {
     pub architecture: Vec<usize>,
-    pub weights: Vec<Matrix>,
-    pub biases: Vec<Matrix>,
-    pub activations: Vec<Matrix>,
+    pub weights: Vec<Matrix<f32>>,
+    pub biases: Vec<Matrix<f32>>,
+    pub activations: Vec<Matrix<f32>>,
     pub activation_fn: Activation,
 }
 
@@ -250,7 +94,7 @@ impl NeuralNetwork {
         }
     }
 
-    pub fn predict(&mut self, input: &[f32]) -> &Matrix {
+    pub fn predict(&mut self, input: &[f32]) -> &Matrix<f32> {
         self.forward(&input);
         self.activations.last().unwrap()
     }
@@ -288,12 +132,12 @@ impl NeuralNetwork {
 
     pub fn backpropagation(&mut self, training_data: &[(Vec<f32>, Vec<f32>)], learning_rate: f32) {
         let batch_size = training_data.len();
-        let mut weight_gradients: Vec<Matrix> = self
+        let mut weight_gradients: Vec<Matrix<f32>> = self
             .weights
             .iter()
             .map(|w| Matrix::new(w.rows, w.cols))
             .collect();
-        let mut bias_gradients: Vec<Matrix> = self
+        let mut bias_gradients: Vec<Matrix<f32>> = self
             .biases
             .iter()
             .map(|b| Matrix::new(b.rows, b.cols))
@@ -361,20 +205,6 @@ impl NeuralNetwork {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_matrix_operations() {
-        let mut m1 = Matrix::new(2, 3);
-        m1.fill(1.0);
-        let mut m2 = Matrix::new(3, 2);
-        m2.fill(2.0);
-
-        let result = m1.dot(&m2);
-        assert_eq!(result.rows, 2);
-        assert_eq!(result.cols, 2);
-        assert_eq!(result[(0, 0)], 6.0);
-    }
-
     #[test]
     fn test_neural_network() {
         let mut nn = NeuralNetwork::new(&[2, 3, 1], Activation::Sigmoid);

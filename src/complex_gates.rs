@@ -3,7 +3,7 @@ use rand::Rng;
 type Sample = [f32; 3];
 
 #[derive(Copy, Clone, Debug)]
-struct Xor {
+pub struct Xor {
     or_w1: f32,
     or_w2: f32,
     or_b: f32,
@@ -17,35 +17,35 @@ struct Xor {
     sample: [Sample; 4],
 }
 
-const XOR_TRAIN: [Sample; 4] = [
+pub const XOR_TRAIN: [Sample; 4] = [
     [0.0, 0.0, 0.0],
     [1.0, 0.0, 1.0],
     [0.0, 1.0, 1.0],
     [1.0, 1.0, 0.0],
 ];
 
-const OR_TRAIN: [Sample; 4] = [
+pub const OR_TRAIN: [Sample; 4] = [
     [0.0, 0.0, 0.0],
     [1.0, 0.0, 1.0],
     [0.0, 1.0, 1.0],
     [1.0, 1.0, 1.0],
 ];
 
-const AND_TRAIN: [Sample; 4] = [
+pub const AND_TRAIN: [Sample; 4] = [
     [0.0, 0.0, 0.0],
     [1.0, 0.0, 0.0],
     [0.0, 1.0, 0.0],
     [1.0, 1.0, 1.0],
 ];
 
-const NAND_TRAIN: [Sample; 4] = [
+pub const NAND_TRAIN: [Sample; 4] = [
     [0.0, 0.0, 1.0],
     [1.0, 0.0, 1.0],
     [0.0, 1.0, 1.0],
     [1.0, 1.0, 0.0],
 ];
 
-const NOR_TRAIN: [Sample; 4] = [
+pub const NOR_TRAIN: [Sample; 4] = [
     [0.0, 0.0, 1.0],
     [1.0, 0.0, 0.0],
     [0.0, 1.0, 0.0],
@@ -57,7 +57,7 @@ fn sigmoid(x: f32) -> f32 {
 }
 
 impl Xor {
-    fn new(sample: &[Sample; 4]) -> Self {
+    pub fn new(sample: &[Sample; 4]) -> Self {
         let mut rng = rand::thread_rng();
         Xor {
             or_w1: rng.gen(),
@@ -132,12 +132,13 @@ impl Xor {
         g
     }
 
-    fn run(&mut self) {
+    pub fn run(&mut self) {
         let eps = 1e-1;
         let rate = 1e-1;
 
         // Training
-        for _ in 0..100_000 {
+        for i in 0..100_000 {
+            println!("Epoch {i}: cost = {}", self.cost());
             let g = self.finite_diff(eps);
             self.learn(&g, rate);
         }
