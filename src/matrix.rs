@@ -116,8 +116,38 @@ impl<T: MatrixElement> Matrix<T> {
         }
     }
 
+    pub fn to_slice(&self) -> &[T] {
+        &self.elements
+    }
+
+    pub fn to_vec2d(&self) -> Vec<Vec<T>> {
+        let mut result = Vec::with_capacity(self.rows);
+        for i in 0..self.rows {
+            let mut row = Vec::with_capacity(self.cols);
+            for j in 0..self.cols {
+                row.push(self[(i, j)]);
+            }
+            result.push(row);
+        }
+        result
+    }
+
     pub fn fill(&mut self, value: T) {
         self.elements.fill(value);
+    }
+
+    pub fn vstack(&mut self, other: &Matrix<T>) {
+        assert_eq!(self.cols, other.cols);
+        self.elements.extend_from_slice(&other.elements);
+        self.rows += other.rows;
+    }
+
+    pub fn hstack(&mut self, other: &Matrix<T>) {
+        assert_eq!(self.rows, other.rows);
+        for i in 0..self.rows {
+            self.elements.extend_from_slice(&other.elements[i * other.cols..(i + 1) * other.cols]);
+        }
+        self.cols += other.cols;
     }
 
     pub fn randomize(&mut self, low: T, high: T) {
@@ -469,6 +499,19 @@ impl<'a, T: MatrixElement> MatrixView<'a, T> {
             None
         }
     }
+
+    pub fn submatrix(&self, row_start: usize, col_start: usize, rows: usize, cols: usize) -> Self {
+        assert!(row_start + rows <= self.rows);
+        assert!(col_start + cols <= self.cols);
+
+        Self {
+            elements: self.elements,
+            rows,
+            cols,
+            stride: self.stride,
+            offset: self.offset + row_start * self.stride + col_start,
+        }
+    }
 }
 
 impl<'a, T: MatrixElement> MatrixViewMut<'a, T> {
@@ -503,6 +546,25 @@ impl<'a, T: MatrixElement> MatrixViewMut<'a, T> {
             Some(&mut self.elements[row * self.stride + col + self.offset])
         } else {
             None
+        }
+    }
+
+    pub fn submatrix_mut<'b: 'a>(
+        &'b mut self,
+        row_start: usize,
+        col_start: usize,
+        rows: usize,
+        cols: usize,
+    ) -> Self {
+        assert!(row_start + rows <= self.rows);
+        assert!(col_start + cols <= self.cols);
+
+        Self {
+            elements: self.elements,
+            rows,
+            cols,
+            stride: self.stride,
+            offset: self.offset + row_start * self.stride + col_start,
         }
     }
 
@@ -575,12 +637,18 @@ impl<T: MatrixElement> Matrix<T> {
 
 impl<T: MatrixElement> Display for Matrix<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        writeln!(f, "[")?;
         for i in 0..self.rows {
+            write!(f, "[")?;
             for j in 0..self.cols {
-                write!(f, "{:.2} ", self[(i, j)])?;
+                write!(f, "{:.2}", self[(i, j)])?;
+                if j < self.cols - 1 {
+                    write!(f, ", ")?;
+                }
             }
-            writeln!(f)?;
+            writeln!(f, "]")?;
         }
+        writeln!(f, "]")?;
         Ok(())
     }
 }
