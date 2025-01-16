@@ -1,6 +1,6 @@
-use std::ops::Div;
 use rand::Rng;
 use std::fmt::Debug;
+use std::ops::Div;
 use std::{
     fmt::Display,
     ops::{Add, AddAssign, Index, IndexMut, Mul, MulAssign, Sub, SubAssign},
@@ -127,14 +127,25 @@ impl<T: MatrixElement> Matrix<T> {
     }
 
     pub fn add(&mut self, other: &Matrix<T>) {
-        if other.rows == 1 && other.cols == 1 {
-            for element in &mut self.elements {
-                *element += other[(0, 0)];
+        // Handle broadcasting for 1xN matrix being added to MxN matrix
+        if other.rows == 1 {
+            for i in 0..self.rows {
+                for j in 0..self.cols {
+                    self[(i, j)] += other[(0, j)];
+                }
             }
             return;
         }
-        assert_eq!(self.rows, other.rows);
-        assert_eq!(self.cols, other.cols);
+
+        // Regular case - matrices must have same dimensions
+        assert_eq!(
+            self.rows, other.rows,
+            "Matrix dimensions must match for addition"
+        );
+        assert_eq!(
+            self.cols, other.cols,
+            "Matrix dimensions must match for addition"
+        );
 
         for i in 0..self.elements.len() {
             self.elements[i] += other.elements[i];
@@ -539,13 +550,25 @@ impl<'a, T: MatrixElement> IndexMut<usize> for MatrixViewMut<'a, T> {
     }
 }
 
-impl<T: MatrixElement>  Matrix<T> {
+impl<T: MatrixElement> Matrix<T> {
     pub fn apply_fn<F>(&mut self, f: F)
     where
         F: Fn(T) -> T,
     {
         for element in &mut self.elements {
             *element = f(*element);
+        }
+    }
+
+    pub fn apply_with_matrix<F>(&mut self, other: &Matrix<T>, f: F)
+    where
+        F: Fn(T, T) -> T,
+    {
+        assert_eq!(self.rows, other.rows);
+        assert_eq!(self.cols, other.cols);
+
+        for i in 0..self.elements.len() {
+            self.elements[i] = f(self.elements[i], other.elements[i]);
         }
     }
 }
