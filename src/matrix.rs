@@ -1,12 +1,31 @@
 use rand::Rng;
-use std::fmt::Debug;
-use std::ops::Div;
+use std::error::Error;
 use std::{
-    fmt::Display,
-    ops::{Add, AddAssign, Index, IndexMut, Mul, MulAssign, Sub, SubAssign},
+    fmt::{Debug, Display},
+    ops::{Add, AddAssign, Div, Index, IndexMut, Mul, MulAssign, Sub, SubAssign},
 };
 
-// MatrixElement trait and its implementations remain the same
+#[derive(Debug)]
+pub enum MatrixError {
+    DimensionMismatch(String),
+    IndexOutOfBounds(String),
+    InvalidOperation(String),
+    SingularMatrix(String),
+}
+
+impl Display for MatrixError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            MatrixError::DimensionMismatch(msg) => write!(f, "Dimension Mismatch: {}", msg),
+            MatrixError::IndexOutOfBounds(msg) => write!(f, "Index Out of Bounds: {}", msg),
+            MatrixError::InvalidOperation(msg) => write!(f, "Invalid Operation: {}", msg),
+            MatrixError::SingularMatrix(msg) => write!(f, "Singular Matrix: {}", msg),
+        }
+    }
+}
+
+impl Error for MatrixError {}
+
 pub trait MatrixElement:
     Default
     + Display
@@ -36,12 +55,12 @@ macro_rules! impl_matrix_element {
                 fn random(low: Self, high: Self) -> Self {
                     let mut rng = rand::thread_rng();
                     match std::any::type_name::<$t>() {
-                        "f32" => rng.gen::<f32>() as $t * (high - low) + low,
-                        "f64" => rng.gen::<f64>() as $t * (high - low) + low,
+                        "f32" | "f64" => rng.gen::<$t>() * (high - low) + low,
                         _ => rng.gen_range(low..=high),
                     }
                 }
-                fn zero() -> Self{
+
+                fn zero() -> Self {
                     Self::default()
                 }
 
@@ -59,8 +78,7 @@ macro_rules! impl_matrix_element {
 
 impl_matrix_element!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize, f32, f64);
 
-// Main Matrix struct remains mostly the same
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Matrix<T: MatrixElement> {
     pub rows: usize,
     pub cols: usize,
@@ -83,7 +101,6 @@ impl<T: MatrixElement> IndexMut<(usize, usize)> for Matrix<T> {
     }
 }
 
-// Base Matrix implementation remains the same, just showing relevant methods
 impl<T: MatrixElement> Matrix<T> {
     pub fn new(rows: usize, cols: usize) -> Self {
         Self {
@@ -93,29 +110,47 @@ impl<T: MatrixElement> Matrix<T> {
         }
     }
 
-    pub fn from_vec2d(elements: Vec<Vec<T>>) -> Self {
+    pub fn from_vec2d(elements: Vec<Vec<T>>) -> Result<Self, MatrixError> {
         let rows = elements.len();
+        if rows == 0 {
+            return Ok(Matrix::new(0, 0));
+        }
+
         let cols = elements[0].len();
+        if elements.iter().any(|row| row.len() != cols) {
+            return Err(MatrixError::DimensionMismatch(
+                "All rows must have the same number of elements".to_string(),
+            ));
+        }
+
         let mut flat_elements = Vec::with_capacity(rows * cols);
         for row in elements {
             flat_elements.extend(row);
         }
-        Self {
-            rows,
-            cols,
-            elements: flat_elements,
-        }
+
+        let mut result = Matrix::new(rows, cols);
+        result.elements = flat_elements;
+        Ok(result)
     }
 
-    pub fn from_slice(rows: usize, cols: usize, elements: &[T]) -> Self {
-        assert_eq!(elements.len(), rows * cols);
-        Self {
+    // NOTE: DONE
+    pub fn from_slice(rows: usize, cols: usize, elements: &[T]) -> Result<Self, MatrixError> {
+        if elements.len() != rows * cols {
+            return Err(MatrixError::DimensionMismatch(format!(
+                "Slice length {} does not match dimensions {} x {}",
+                elements.len(),
+                rows,
+                cols
+            )));
+        }
+        Ok(Self {
             rows,
             cols,
             elements: elements.to_vec(),
-        }
+        })
     }
 
+    // NOTE: DONE
     pub fn to_slice(&self) -> &[T] {
         &self.elements
     }
@@ -136,81 +171,112 @@ impl<T: MatrixElement> Matrix<T> {
         self.elements.fill(value);
     }
 
-    pub fn vstack(&mut self, other: &Matrix<T>) {
-        assert_eq!(self.cols, other.cols);
+    pub fn vstack(&mut self, other: &Matrix<T>) -> Result<(), MatrixError> {
+        if self.cols != other.cols {
+            return Err(MatrixError::DimensionMismatch(format!(
+                "Cannot vertically stack matrices with different column counts ({} vs {})",
+                self.cols, other.cols
+            )));
+        }
         self.elements.extend_from_slice(&other.elements);
         self.rows += other.rows;
+        Ok(())
     }
 
-    pub fn hstack(&mut self, other: &Matrix<T>) {
-        assert_eq!(self.rows, other.rows);
-        for i in 0..self.rows {
-            self.elements.extend_from_slice(&other.elements[i * other.cols..(i + 1) * other.cols]);
+    pub fn hstack(&mut self, other: &Matrix<T>) -> Result<(), MatrixError> {
+        if self.rows != other.rows {
+            return Err(MatrixError::DimensionMismatch(format!(
+                "Cannot horizontally stack matrices with different row counts ({} vs {})",
+                self.rows, other.rows
+            )));
         }
+        let mut new_elements = Vec::with_capacity(self.elements.len() + other.elements.len());
+        for i in 0..self.rows {
+            new_elements.extend_from_slice(&self.elements[i * self.cols..(i + 1) * self.cols]);
+            new_elements.extend_from_slice(&other.elements[i * other.cols..(i + 1) * other.cols]);
+        }
+        self.elements = new_elements;
         self.cols += other.cols;
+        Ok(())
     }
-
     pub fn randomize(&mut self, low: T, high: T) {
         for element in &mut self.elements {
             *element = T::random(low, high);
         }
     }
 
-    pub fn add(&mut self, other: &Matrix<T>) {
-        // Handle broadcasting for 1xN matrix being added to MxN matrix
+    // NOTE: DONE
+    pub fn add(&mut self, other: &Matrix<T>) -> Result<(), MatrixError> {
         if other.rows == 1 {
+            if other.cols != self.cols {
+                return Err(MatrixError::DimensionMismatch(
+                    "Broadcasting matrix must have same number of columns".to_string(),
+                ));
+            }
             for i in 0..self.rows {
                 for j in 0..self.cols {
                     self[(i, j)] += other[(0, j)];
                 }
             }
-            return;
+            return Ok(());
         }
 
-        // Regular case - matrices must have same dimensions
-        assert_eq!(
-            self.rows, other.rows,
-            "Matrix dimensions must match for addition"
-        );
-        assert_eq!(
-            self.cols, other.cols,
-            "Matrix dimensions must match for addition"
-        );
+        if self.rows != other.rows || self.cols != other.cols {
+            return Err(MatrixError::DimensionMismatch(format!(
+                "Cannot add matrices of size {}x{} and {}x{}",
+                self.rows, self.cols, other.rows, other.cols
+            )));
+        }
 
         for i in 0..self.elements.len() {
             self.elements[i] += other.elements[i];
         }
+        return Ok(());
     }
 
-    pub fn sub(&mut self, other: &Matrix<T>) {
+    // NOTE: DONE
+    pub fn sub(&mut self, other: &Matrix<T>) -> Result<(), MatrixError> {
         if other.rows == 1 && other.cols == 1 {
+            let scalar = other[(0, 0)];
             for element in &mut self.elements {
-                *element -= other[(0, 0)];
+                *element -= scalar;
             }
-            return;
+            return Ok(());
         }
-        assert_eq!(self.rows, other.rows);
-        assert_eq!(self.cols, other.cols);
+
+        if self.rows != other.rows || self.cols != other.cols {
+            return Err(MatrixError::DimensionMismatch(format!(
+                "Cannot subtract matrices of size {}x{} and {}x{}",
+                self.rows, self.cols, other.rows, other.cols
+            )));
+        }
 
         for i in 0..self.elements.len() {
             self.elements[i] -= other.elements[i];
         }
+        Ok(())
     }
 
-    pub fn dot(&self, other: &Matrix<T>) -> Matrix<T> {
-        assert_eq!(self.cols, other.rows);
-        let mut result = Matrix::new(self.rows, other.cols);
+    // NOTE: DONE
+    pub fn dot(&self, other: &Matrix<T>) -> Result<Matrix<T>, MatrixError> {
+        if self.cols != other.rows {
+            return Err(MatrixError::DimensionMismatch(format!(
+                "Cannot multiply matrices of size {}x{} and {}x{}",
+                self.rows, self.cols, other.rows, other.cols
+            )));
+        }
 
+        let mut result = Matrix::new(self.rows, other.cols);
         for i in 0..self.rows {
             for j in 0..other.cols {
-                let mut sum = T::default();
+                let mut sum = T::zero();
                 for k in 0..self.cols {
                     sum = sum + self[(i, k)] * other[(k, j)];
                 }
                 result[(i, j)] = sum;
             }
         }
-        result
+        Ok(result)
     }
 
     pub fn row(&self, index: usize) -> MatrixView<T> {
@@ -260,7 +326,8 @@ impl<T: MatrixElement> Matrix<T> {
 }
 
 impl<T: MatrixElement> Matrix<T> {
-    pub fn transpose(&mut self) {
+    // NOTE: DONE
+    pub fn transpose(&mut self) -> Result<(), MatrixError> {
         let mut transposed = Matrix::new(self.cols, self.rows);
         for i in 0..self.rows {
             for j in 0..self.cols {
@@ -268,10 +335,18 @@ impl<T: MatrixElement> Matrix<T> {
             }
         }
         *self = transposed;
+        Ok(())
     }
 
-    pub fn minor(&self, row: usize, col: usize) -> Matrix<T> {
-        assert!(row < self.rows && col < self.cols);
+    // NOTE: DONE
+    pub fn minor(&self, row: usize, col: usize) -> Result<Matrix<T>, MatrixError> {
+        if row >= self.rows || col >= self.cols {
+            return Err(MatrixError::IndexOutOfBounds(format!(
+                "Cannot compute minor for position ({}, {}) in {}x{} matrix",
+                row, col, self.rows, self.cols
+            )));
+        }
+
         let mut minor = Matrix::new(self.rows - 1, self.cols - 1);
         let mut minor_row = 0;
         let mut minor_col;
@@ -290,41 +365,43 @@ impl<T: MatrixElement> Matrix<T> {
             }
             minor_row += 1;
         }
-        minor
+        Ok(minor)
     }
 
-    pub fn determinant(&self) -> T {
-        assert_eq!(
-            self.rows, self.cols,
-            "Matrix must be square to compute determinant"
-        );
+    // NOTE: DONE
+    pub fn determinant(&self) -> Result<T, MatrixError> {
+        if self.rows != self.cols {
+            return Err(MatrixError::InvalidOperation(
+                "Cannot compute determinant of non-square matrix".to_string(),
+            ));
+        }
 
         match self.rows {
-            0 => T::zero(),
-            1 => self[(0, 0)],
+            0 => Ok(T::zero()),
+            1 => Ok(self[(0, 0)]),
             2 => {
-                // For 2x2 matrix, compute ad - bc directly
-                let prod1 = self[(0, 0)] * self[(1, 1)];
-                let prod2 = self[(0, 1)] * self[(1, 0)];
-                prod1.sub(prod2)
+                let a = self[(0, 0)];
+                let b = self[(0, 1)];
+                let c = self[(1, 0)];
+                let d = self[(1, 1)];
+                Ok(a * d - b * c)
             }
             _ => {
-                // For larger matrices, use Laplace expansion along first row
                 let mut result = T::zero();
                 let mut add_next = true;
 
                 for j in 0..self.cols {
-                    let minor_det = self.minor(0, j).determinant();
+                    let minor_det = self.minor(0, j)?.determinant()?;
                     let term = self[(0, j)] * minor_det;
 
                     if add_next {
                         result = result + term;
                     } else {
-                        result = result.sub(term);
+                        result = result - term;
                     }
                     add_next = !add_next;
                 }
-                result
+                Ok(result)
             }
         }
     }
@@ -332,52 +409,52 @@ impl<T: MatrixElement> Matrix<T> {
 
 // Helper method to compute determinant with explicit sign handling
 impl<T: MatrixElement> Matrix<T> {
-    pub fn adjugate(&self) -> Matrix<T> {
-        assert_eq!(
-            self.rows, self.cols,
-            "Matrix must be square to compute adjugate"
-        );
-        let mut result = Matrix::new(self.rows, self.cols);
+    // NOTE: DONE
+    pub fn adjugate(&self) -> Result<Matrix<T>, MatrixError> {
+        if self.rows != self.cols {
+            return Err(MatrixError::InvalidOperation(
+                "Cannot compute adjugate of non-square matrix".to_string(),
+            ));
+        }
 
+        let mut result = Matrix::new(self.rows, self.cols);
         for i in 0..self.rows {
             for j in 0..self.cols {
-                // Compute cofactor
-                let minor = self.minor(i, j);
-                let cofactor = minor.determinant();
-                // Apply checkerboard pattern for sign
+                let minor = self.minor(i, j)?;
+                let cofactor = minor.determinant()?;
                 result[(j, i)] = if (i + j) % 2 == 0 {
                     cofactor
                 } else {
-                    T::zero().sub(cofactor)
+                    T::zero() - cofactor
                 };
             }
         }
-        result
+        Ok(result)
     }
 
-    pub fn inverse(&self) -> Option<Matrix<T>> {
-        assert_eq!(
-            self.rows, self.cols,
-            "Matrix must be square to compute inverse"
-        );
-
-        let det = self.determinant();
-        if det.is_zero() {
-            return None; // Matrix is not invertible
+    // NOTE: DONE
+    pub fn inverse(&self) -> Result<Matrix<T>, MatrixError> {
+        if self.rows != self.cols {
+            return Err(MatrixError::InvalidOperation(
+                "Cannot compute inverse of non-square matrix".to_string(),
+            ));
         }
 
-        // Compute adjugate matrix
-        let adj = self.adjugate();
+        let det = self.determinant()?;
+        if det.is_zero() {
+            return Err(MatrixError::SingularMatrix(
+                "Matrix is singular (determinant is zero)".to_string(),
+            ));
+        }
 
-        // Divide adjugate by determinant
+        let adj = self.adjugate()?;
         let mut result = Matrix::new(self.rows, self.cols);
         for i in 0..self.rows {
             for j in 0..self.cols {
-                result[(i, j)] = adj[(i, j)].div(det);
+                result[(i, j)] = adj[(i, j)] / det;
             }
         }
-
-        Some(result)
+        Ok(result)
     }
 
     // Helper method to create identity matrix
@@ -406,28 +483,31 @@ impl<T: MatrixElement> Matrix<T> {
         true
     }
 
+    // NOTE: DONE
     // Method to validate inverse calculation
-    pub fn verify_inverse(&self, inverse: &Matrix<T>) -> bool {
-        let product = self.dot(inverse);
-        product.is_identity()
+    pub fn verify_inverse(&self, inverse: &Matrix<T>) -> Result<bool, MatrixError> {
+        let product = self.dot(inverse)?;
+        Ok(product.is_identity())
     }
 
-    pub fn determinant_with_cofactors(&self) -> (T, bool) {
-        assert_eq!(
-            self.rows, self.cols,
-            "Matrix must be square to compute determinant"
-        );
+    // NOTE: DONE
+    pub fn determinant_with_cofactors(&self) -> Result<(T, bool), MatrixError> {
+        if self.rows != self.cols {
+            return Err(MatrixError::InvalidOperation(
+                "Matrix must be square to compute determinant".to_string(),
+            ));
+        }
 
         match self.rows {
-            0 => (T::zero(), true),
-            1 => (self[(0, 0)], true),
+            0 => Ok((T::zero(), true)),
+            1 => Ok((self[(0, 0)], true)),
             2 => {
                 let prod1 = self[(0, 0)] * self[(1, 1)];
                 let prod2 = self[(0, 1)] * self[(1, 0)];
                 if prod1 >= prod2 {
-                    (prod1.sub(prod2), true)
+                    Ok((prod1.sub(prod2), true))
                 } else {
-                    (prod2.sub(prod1), false)
+                    Ok((prod2.sub(prod1), false))
                 }
             }
             _ => {
@@ -435,7 +515,7 @@ impl<T: MatrixElement> Matrix<T> {
                 let mut is_positive = true;
 
                 for j in 0..self.cols {
-                    let (minor_det, minor_sign) = self.minor(0, j).determinant_with_cofactors();
+                    let (minor_det, minor_sign) = self.minor(0, j)?.determinant_with_cofactors()?;
                     let term = self[(0, j)] * minor_det;
                     let add_this_term = (j % 2 == 0) == minor_sign;
 
@@ -450,7 +530,8 @@ impl<T: MatrixElement> Matrix<T> {
                         }
                     }
                 }
-                (result, is_positive)
+                let x = Ok((result, is_positive));
+                x
             }
         }
     }
@@ -555,17 +636,31 @@ impl<'a, T: MatrixElement> MatrixViewMut<'a, T> {
         col_start: usize,
         rows: usize,
         cols: usize,
-    ) -> Self {
-        assert!(row_start + rows <= self.rows);
-        assert!(col_start + cols <= self.cols);
+    ) -> Result<Self, MatrixError> {
+        // assert!(row_start + rows <= self.rows);
+        // assert!(col_start + cols <= self.cols);
 
-        Self {
+        if row_start + rows > self.rows {
+            return Err(MatrixError::IndexOutOfBounds(format!(
+                "Row index out of bounds: {} + {} > {}",
+                row_start, rows, self.rows
+            )));
+        }
+
+        if col_start + cols > self.cols {
+            return Err(MatrixError::IndexOutOfBounds(format!(
+                "Column index out of bounds: {} + {} > {}",
+                col_start, cols, self.cols
+            )));
+        }
+
+        Ok( Self {
             elements: self.elements,
             rows,
             cols,
             stride: self.stride,
             offset: self.offset + row_start * self.stride + col_start,
-        }
+        } )
     }
 
     pub fn fill(&mut self, value: T) {
@@ -639,7 +734,7 @@ impl<T: MatrixElement> Display for Matrix<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         writeln!(f, "[")?;
         for i in 0..self.rows {
-            write!(f, "[")?;
+            write!(f, "  [")?;
             for j in 0..self.cols {
                 write!(f, "{:.2}", self[(i, j)])?;
                 if j < self.cols - 1 {
@@ -652,87 +747,227 @@ impl<T: MatrixElement> Display for Matrix<T> {
         Ok(())
     }
 }
-
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
+    use std::f64::EPSILON;
 
-    #[test]
-    fn test_matrix_operations() {
-        let mut m1 = Matrix::new(2, 3);
-        m1.fill(1.0);
-        let mut m2 = Matrix::new(3, 2);
-        m2.fill(2.0);
+    fn assert_float_eq(a: f64, b: f64) {
+        assert!((a - b).abs() < EPSILON, "{} != {}", a, b);
+    }
 
-        let result = m1.dot(&m2);
-        assert_eq!(result.rows, 2);
-        assert_eq!(result.cols, 2);
-        assert_eq!(result[(0, 0)], 6.0);
+    fn assert_matrix_eq(a: &Matrix<f64>, b: &Matrix<f64>) {
+        assert_eq!(a.rows, b.rows);
+        assert_eq!(a.cols, b.cols);
+        for i in 0..a.rows {
+            for j in 0..a.cols {
+                assert_float_eq(a[(i, j)], b[(i, j)]);
+            }
+        }
     }
 
     #[test]
-    fn test_matrix_view() {
-        let mut m = Matrix::new(3, 3);
-        m.fill(1.0);
-        let view = m.row(1);
-        assert_eq!(view[0], 1.0);
+    fn test_matrix_creation() {
+        let m = Matrix::<f64>::new(2, 3);
+        assert_eq!(m.rows, 2);
+        assert_eq!(m.cols, 3);
+        assert_eq!(m.elements.len(), 6);
     }
 
     #[test]
-    fn test_matrix_view_mut() {
-        let mut m = Matrix::new(3, 3);
-        m.fill(1.0);
-        let mut view = m.row_mut(1);
-        view.fill(2.0);
-        assert_eq!(view[0], 2.0);
+    fn test_from_vec2d() {
+        let data = vec![vec![1.0, 2.0], vec![3.0, 4.0]];
+        let m = Matrix::from_vec2d(data).unwrap();
+        assert_eq!(m.rows, 2);
+        assert_eq!(m.cols, 2);
+        assert_float_eq(m[(0, 0)], 1.0);
+        assert_float_eq(m[(0, 1)], 2.0);
+        assert_float_eq(m[(1, 0)], 3.0);
+        assert_float_eq(m[(1, 1)], 4.0);
     }
 
     #[test]
-    fn test_matrix_det() {
-        let m = Matrix::from_vec2d(vec![vec![1, 2, 3], vec![4, 5, 6], vec![7, 8, 9]]);
-        println!("Matrix:\n{}", m);
-        assert_eq!(m.determinant(), 0);
+    fn test_from_slice() {
+        let data = vec![1.0, 2.0, 3.0, 4.0];
+        let m = Matrix::from_slice(2, 2, &data).unwrap();
+        assert_eq!(m.rows, 2);
+        assert_eq!(m.cols, 2);
+        assert_float_eq(m[(0, 0)], 1.0);
+        assert_float_eq(m[(0, 1)], 2.0);
+        assert_float_eq(m[(1, 0)], 3.0);
+        assert_float_eq(m[(1, 1)], 4.0);
     }
 
     #[test]
-    fn test_matrix_cofactor() {
-        let m = Matrix::from_vec2d(vec![vec![1, 2, 3], vec![4, 5, 6], vec![7, 8, 9]]);
-        println!("Matrix:\n{}", m);
-        let (det, sign) = m.determinant_with_cofactors();
-        assert_eq!(det, 0);
-        assert_eq!(sign, true);
+    fn test_matrix_indexing() {
+        let mut m = Matrix::<f64>::new(2, 2);
+        m[(0, 0)] = 1.0;
+        m[(0, 1)] = 2.0;
+        m[(1, 0)] = 3.0;
+        m[(1, 1)] = 4.0;
+
+        assert_float_eq(m[(0, 0)], 1.0);
+        assert_float_eq(m[(0, 1)], 2.0);
+        assert_float_eq(m[(1, 0)], 3.0);
+        assert_float_eq(m[(1, 1)], 4.0);
+    }
+
+    #[test]
+    fn test_matrix_addition() {
+        let mut m1 = Matrix::from_vec2d(vec![vec![1.0, 2.0], vec![3.0, 4.0]]).unwrap();
+        let m2 = Matrix::from_vec2d(vec![vec![5.0, 6.0], vec![7.0, 8.0]]).unwrap();
+        m1.add(&m2).unwrap();
+
+        assert_float_eq(m1[(0, 0)], 6.0);
+        assert_float_eq(m1[(0, 1)], 8.0);
+        assert_float_eq(m1[(1, 0)], 10.0);
+        assert_float_eq(m1[(1, 1)], 12.0);
+    }
+
+    #[test]
+    fn test_matrix_subtraction() {
+        let mut m1 = Matrix::from_vec2d(vec![vec![5.0, 6.0], vec![7.0, 8.0]]).unwrap();
+        let m2 = Matrix::from_vec2d(vec![vec![1.0, 2.0], vec![3.0, 4.0]]).unwrap();
+        m1.sub(&m2).unwrap();
+
+        assert_float_eq(m1[(0, 0)], 4.0);
+        assert_float_eq(m1[(0, 1)], 4.0);
+        assert_float_eq(m1[(1, 0)], 4.0);
+        assert_float_eq(m1[(1, 1)], 4.0);
+    }
+
+    #[test]
+    fn test_matrix_multiplication() {
+        let m1 = Matrix::from_vec2d(vec![vec![1.0, 2.0], vec![3.0, 4.0]]).unwrap();
+        let m2 = Matrix::from_vec2d(vec![vec![5.0, 6.0], vec![7.0, 8.0]]).unwrap();
+        let result = m1.dot(&m2).unwrap();
+
+        assert_float_eq(result[(0, 0)], 19.0);
+        assert_float_eq(result[(0, 1)], 22.0);
+        assert_float_eq(result[(1, 0)], 43.0);
+        assert_float_eq(result[(1, 1)], 50.0);
     }
 
     #[test]
     fn test_matrix_transpose() {
+        let mut m = Matrix::from_vec2d(vec![vec![1.0, 2.0], vec![3.0, 4.0]]).unwrap();
+        m.transpose().unwrap();
+
+        assert_float_eq(m[(0, 0)], 1.0);
+        assert_float_eq(m[(0, 1)], 3.0);
+        assert_float_eq(m[(1, 0)], 2.0);
+        assert_float_eq(m[(1, 1)], 4.0);
+    }
+
+    #[test]
+    fn test_matrix_determinant() {
+        let m = Matrix::from_vec2d(vec![vec![1.0, 2.0], vec![3.0, 4.0]]).unwrap();
+        let det = m.determinant().unwrap();
+        assert_float_eq(det, -2.0);
+    }
+
+    #[test]
+    fn test_matrix_inverse() {
+        let m = Matrix::from_vec2d(vec![vec![1.0, 2.0], vec![3.0, 4.0]]).unwrap();
+        let inv = m.inverse().unwrap();
+        let expected = Matrix::from_vec2d(vec![
+            vec![-2.0, 1.0],
+            vec![1.5, -0.5],
+        ]).unwrap();
+        assert_matrix_eq(&inv, &expected);
+    }
+
+    #[test]
+    fn test_matrix_views() {
         let mut m = Matrix::from_vec2d(vec![
-            vec![1.0, 0.0, 1.0],
-            vec![0.0, 1.0, 0.0],
-            vec![1.0, 0.0, 0.0],
-        ]);
-        m.transpose();
-        assert_eq!(m[(0, 1)], 0.0);
+            vec![1.0, 2.0, 3.0],
+            vec![4.0, 5.0, 6.0],
+            vec![7.0, 8.0, 9.0],
+        ]).unwrap();
+
+        // Test row view
+        let row = m.row(1);
+        assert_eq!(row.rows, 1);
+        assert_eq!(row.cols, 3);
+        assert_float_eq(row[0], 4.0);
+        assert_float_eq(row[1], 5.0);
+        assert_float_eq(row[2], 6.0);
+
+        // Test column view
+        let col = m.col(1);
+        assert_eq!(col.rows, 3);
+        assert_eq!(col.cols, 1);
+        assert_float_eq(col[0], 2.0);
+        assert_float_eq(col[1], 5.0);
+        assert_float_eq(col[2], 8.0);
+
+        // Test mutable views
+        let mut row_mut = m.row_mut(1);
+        row_mut.fill(10.0);
+        assert_float_eq(m[(1, 0)], 10.0);
+        assert_float_eq(m[(1, 1)], 10.0);
+        assert_float_eq(m[(1, 2)], 10.0);
     }
 
     #[test]
-    fn test_matrix_add() {
-        let mut m1 = Matrix::new(2, 2);
-        m1.fill(1.0);
-        let mut m2 = Matrix::new(2, 2);
-        m2.fill(2.0);
+    fn test_matrix_stack_operations() {
+        let mut m1 = Matrix::from_vec2d(vec![vec![1.0, 2.0], vec![3.0, 4.0]]).unwrap();
+        let m2 = Matrix::from_vec2d(vec![vec![5.0, 6.0]]).unwrap();
 
-        m1.add(&m2);
-        assert_eq!(m1[(0, 0)], 3.0);
+        // Test vertical stack
+        m1.vstack(&m2).unwrap();
+        assert_eq!(m1.rows, 3);
+        assert_eq!(m1.cols, 2);
+        assert_float_eq(m1[(2, 0)], 5.0);
+        assert_float_eq(m1[(2, 1)], 6.0);
+
+        // Test horizontal stack
+        let mut m3 = Matrix::from_vec2d(vec![vec![1.0], vec![2.0]]).unwrap();
+        let m4 = Matrix::from_vec2d(vec![vec![3.0], vec![4.0]]).unwrap();
+        m3.hstack(&m4).unwrap();
+        assert_eq!(m3.rows, 2);
+        assert_eq!(m3.cols, 2);
+        assert_float_eq(m3[(0, 1)], 3.0);
+        assert_float_eq(m3[(1, 1)], 4.0);
     }
 
     #[test]
-    fn test_matrix_dot() {
-        let mut m1 = Matrix::new(2, 3);
-        m1.fill(1.0);
-        let mut m2 = Matrix::new(3, 2);
-        m2.fill(2.0);
+    fn test_matrix_identity() {
+        let m = Matrix::<f64>::identity(3);
+        assert!(m.is_identity());
 
-        let result = m1.dot(&m2);
-        assert_eq!(result[(0, 0)], 6.0);
+        let mut non_identity = Matrix::<f64>::identity(3);
+        non_identity[(0, 1)] = 1.0;
+        assert!(!non_identity.is_identity());
+    }
+
+    #[test]
+    fn test_matrix_randomize() {
+        let mut m = Matrix::<f64>::new(3, 3);
+        m.randomize(0.0, 1.0);
+
+        // Check if all elements are within range
+        for i in 0..m.rows {
+            for j in 0..m.cols {
+                assert!(m[(i, j)] >= 0.0 && m[(i, j)] <= 1.0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_error_handling() {
+        // Test dimension mismatch in addition
+        let mut m1 = Matrix::from_vec2d(vec![vec![1.0, 2.0]]).unwrap();
+        let m2 = Matrix::from_vec2d(vec![vec![1.0]]).unwrap();
+        assert!(m1.add(&m2).is_err());
+
+        // Test invalid inverse
+        let singular = Matrix::from_vec2d(vec![vec![0.0, 0.0], vec![0.0, 0.0]]).unwrap();
+        assert!(singular.inverse().is_err());
+
+        // Test out of bounds indexing
+        let m = Matrix::<f64>::new(2, 2);
+        let result = std::panic::catch_unwind(|| m[(3, 3)]);
+        assert!(result.is_err());
     }
 }

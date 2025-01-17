@@ -1,4 +1,4 @@
-use ml_rs::matrix::Matrix;
+use ml_rs::matrix::{Matrix, MatrixError};
 use rand::Rng;
 
 #[derive(Debug)]
@@ -40,24 +40,24 @@ impl Network2 {
         1.0 / (1.0 + (-x).exp())
     }
 
-    fn forward(&mut self, input: &Matrix<f32>) -> &Matrix<f32> {
+    fn forward(&mut self, input: &Matrix<f32>) -> Result<&Matrix<f32>, MatrixError> {
         // First layer
-        let mut hidden = input.dot(&self.w1);
-        hidden.add(&self.b1);
+        let mut hidden = input.dot(&self.w1)?;
+        hidden.add(&self.b1)?;
         hidden.apply_fn(Self::sigmoid);
         self.hidden_cache = hidden;
 
         // Output layer
-        let mut output = self.hidden_cache.dot(&self.w2);
-        output.add(&self.b2);
+        let mut output = self.hidden_cache.dot(&self.w2)?;
+        output.add(&self.b2)?;
         output.apply_fn(Self::sigmoid);
         self.output_cache = output;
 
-        &self.output_cache
+        Ok(&self.output_cache)
     }
 
-    fn cost(&mut self, inputs: &Matrix<f32>, targets: &Matrix<f32>) -> f32 {
-        let output = self.forward(inputs);
+    fn cost(&mut self, inputs: &Matrix<f32>, targets: &Matrix<f32>) -> Result<f32, MatrixError> {
+        let output = self.forward(inputs)?;
         let mut cost = 0.0;
 
         for i in 0..targets.rows {
@@ -67,18 +67,23 @@ impl Network2 {
             }
         }
 
-        cost / (targets.rows as f32)
+        Ok(cost / (targets.rows as f32))
     }
 
-    fn finite_diff(&mut self, inputs: &Matrix<f32>, targets: &Matrix<f32>, eps: f32) -> Network2 {
-        let base_cost = self.cost(inputs, targets);
+    fn finite_diff(
+        &mut self,
+        inputs: &Matrix<f32>,
+        targets: &Matrix<f32>,
+        eps: f32,
+    ) -> Result<Network2, MatrixError> {
+        let base_cost = self.cost(inputs, targets)?;
         let mut gradients = Network2::new(self.w1.rows, self.w1.cols, self.w2.cols);
 
         // Compute gradients for w1
         for i in 0..self.w1.rows {
             for j in 0..self.w1.cols {
                 self.w1[(i, j)] += eps;
-                let new_cost = self.cost(inputs, targets);
+                let new_cost = self.cost(inputs, targets)?;
                 gradients.w1[(i, j)] = (new_cost - base_cost) / eps;
                 self.w1[(i, j)] -= eps;
             }
@@ -88,7 +93,7 @@ impl Network2 {
         for i in 0..self.w2.rows {
             for j in 0..self.w2.cols {
                 self.w2[(i, j)] += eps;
-                let new_cost = self.cost(inputs, targets);
+                let new_cost = self.cost(inputs, targets)?;
                 gradients.w2[(i, j)] = (new_cost - base_cost) / eps;
                 self.w2[(i, j)] -= eps;
             }
@@ -97,7 +102,7 @@ impl Network2 {
         // Compute gradients for b1
         for i in 0..self.b1.cols {
             self.b1[(0, i)] += eps;
-            let new_cost = self.cost(inputs, targets);
+            let new_cost = self.cost(inputs, targets)?;
             gradients.b1[(0, i)] = (new_cost - base_cost) / eps;
             self.b1[(0, i)] -= eps;
         }
@@ -105,12 +110,12 @@ impl Network2 {
         // Compute gradients for b2
         for i in 0..self.b2.cols {
             self.b2[(0, i)] += eps;
-            let new_cost = self.cost(inputs, targets);
+            let new_cost = self.cost(inputs, targets)?;
             gradients.b2[(0, i)] = (new_cost - base_cost) / eps;
             self.b2[(0, i)] -= eps;
         }
 
-        gradients
+        Ok(gradients)
     }
 
     fn learn(&mut self, gradients: &Network2, learning_rate: f32) {
@@ -142,14 +147,14 @@ impl Network2 {
         targets: &Matrix<f32>,
         eps: f32,
         learning_rate: f32,
-    ) -> f32 {
-        let gradients = self.finite_diff(inputs, targets, eps);
+    ) -> Result<f32, MatrixError> {
+        let gradients = self.finite_diff(inputs, targets, eps)?;
         self.learn(&gradients, learning_rate);
         self.cost(inputs, targets)
     }
 }
 
-fn model_run() {
+fn model_run() -> Result<(), Box<dyn std::error::Error>> {
     use ml_rs::nn::DataSet;
     let ds = DataSet::new(
         Matrix::from_vec2d(vec![
@@ -157,7 +162,8 @@ fn model_run() {
             vec![0.0, 1.0, 1.0],
             vec![1.0, 0.0, 1.0],
             vec![1.0, 1.0, 0.0],
-        ]),
+        ])
+        .unwrap(),
         2,
     );
     println!("Data: {}", ds.data);
@@ -173,10 +179,10 @@ fn model_run() {
     let learning_rate = 1e-1;
     let epochs = 100_000;
 
-    println!("Initial cost: {}", network.cost(&inputs, &targets));
+    println!("Initial cost: {}", network.cost(&inputs, &targets)?);
 
     for epoch in 0..epochs {
-        let cost = network.train_epoch(&inputs, &targets, eps, learning_rate);
+        let cost = network.train_epoch(&inputs, &targets, eps, learning_rate)?;
 
         if epoch % 1000 == 0 {
             println!("Epoch {}: cost = {}", epoch, cost);
@@ -186,14 +192,15 @@ fn model_run() {
     // Test the network
     for i in 0..2 {
         for j in 0..2 {
-            let input = Matrix::from_vec2d(vec![vec![i as f32, j as f32]]);
-            let output = network.forward(&input);
+            let input = Matrix::from_vec2d(vec![vec![i as f32, j as f32]]).unwrap();
+            let output = network.forward(&input)?;
             println!("{} XOR {} = {}", i, j, output[(0, 0)]);
         }
     }
+    Ok(())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    model_run();
+    model_run()?;
     Ok(())
 }

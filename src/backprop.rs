@@ -1,4 +1,6 @@
-use crate::matrix::Matrix;
+#![allow(unused)]
+
+use crate::matrix::{Matrix, MatrixError};
 use rand::Rng;
 
 #[derive(Debug)]
@@ -72,12 +74,12 @@ impl Network {
         s * (1.0 - s)
     }
 
-    fn forward(&mut self, input: &Matrix<f32>) -> &Matrix<f32> {
+    fn forward(&mut self, input: &Matrix<f32>) -> Result<&Matrix<f32>, MatrixError> {
         assert_eq!(input.cols, self.w1.rows, "Input dimension mismatch");
 
         // First layer
-        let mut z1 = input.dot(&self.w1);
-        z1.add(&self.b1);
+        let mut z1 = input.dot(&self.w1)?;
+        z1.add(&self.b1)?;
         self.z1_cache = z1.clone(); // Store pre-activation
 
         let mut hidden = z1;
@@ -85,46 +87,51 @@ impl Network {
         self.hidden_cache = hidden;
 
         // Output layer
-        let mut z2 = self.hidden_cache.dot(&self.w2);
-        z2.add(&self.b2);
+        let mut z2 = self.hidden_cache.dot(&self.w2)?;
+        z2.add(&self.b2)?;
         self.z2_cache = z2.clone(); // Store pre-activation
 
         let mut output = z2;
         output.apply_fn(Self::sigmoid);
         self.output_cache = output;
 
-        &self.output_cache
+        Ok(&self.output_cache)
     }
 
-    fn backprop(&mut self, input: &Matrix<f32>, target: &Matrix<f32>, batch_size: f32) {
+    fn backprop(
+        &mut self,
+        input: &Matrix<f32>,
+        target: &Matrix<f32>,
+        batch_size: f32,
+    ) -> Result<(), MatrixError> {
         self.grad_w1.fill(0.0);
         self.grad_b1.fill(0.0);
         self.grad_w2.fill(0.0);
         self.grad_b2.fill(0.0);
 
-        let output = self.forward(input);
+        let output = self.forward(input)?;
 
         // Output layer gradients using stored pre-activation values
         let mut output_delta = output.clone();
-        output_delta.sub(target);
+        output_delta.sub(target)?;
         output_delta.apply_with_matrix(&self.z2_cache, |d, z| {
             d * Self::sigmoid_derivative(z) / batch_size
         });
 
         // Hidden layer gradients
         let mut w2_transpose = self.w2.clone();
-        w2_transpose.transpose();
-        let mut hidden_delta = output_delta.dot(&w2_transpose);
+        w2_transpose.transpose()?;
+        let mut hidden_delta = output_delta.dot(&w2_transpose)?;
         hidden_delta.apply_with_matrix(&self.z1_cache, |d, z| d * Self::sigmoid_derivative(z));
 
         // Compute gradients
         let mut input_t = input.clone();
-        input_t.transpose();
+        input_t.transpose()?;
         let mut hidden_cache_transpose = self.hidden_cache.clone();
-        hidden_cache_transpose.transpose();
+        hidden_cache_transpose.transpose()?;
 
-        self.grad_w2 = hidden_cache_transpose.dot(&output_delta);
-        self.grad_w1 = input_t.dot(&hidden_delta);
+        self.grad_w2 = hidden_cache_transpose.dot(&output_delta)?;
+        self.grad_w1 = input_t.dot(&hidden_delta)?;
 
         // Compute bias gradients by summing across all examples
         for i in 0..output_delta.rows {
@@ -137,6 +144,7 @@ impl Network {
                 self.grad_b1[(0, j)] += hidden_delta[(i, j)];
             }
         }
+        Ok(())
     }
 
     fn update(&mut self, learning_rate: f32) {
@@ -179,13 +187,13 @@ impl Network {
         inputs: &Matrix<f32>,
         targets: &Matrix<f32>,
         learning_rate: f32,
-    ) -> f32 {
+    ) -> Result<f32, MatrixError> {
         let batch_size = inputs.rows as f32;
-        self.backprop(inputs, targets, batch_size);
+        self.backprop(inputs, targets, batch_size)?;
         self.update(learning_rate);
 
         // Calculate cross-entropy loss instead of MSE
-        let output = self.forward(inputs);
+        let output = self.forward(inputs)?;
         let mut cost = 0.0;
         for i in 0..targets.rows {
             for j in 0..targets.cols {
@@ -194,19 +202,20 @@ impl Network {
                 cost += -(y * y_pred.ln() + (1.0 - y) * (1.0 - y_pred).ln());
             }
         }
-        cost / batch_size
+        Ok(cost / batch_size)
     }
 }
 
-fn network1() {
+fn network1() -> Result<(), Box<dyn std::error::Error>> {
     let inputs = Matrix::from_vec2d(vec![
         vec![0.0, 0.0],
         vec![0.0, 1.0],
         vec![1.0, 0.0],
         vec![1.0, 1.0],
-    ]);
+    ])
+    .unwrap();
 
-    let targets = Matrix::from_vec2d(vec![vec![0.0], vec![1.0], vec![1.0], vec![0.0]]);
+    let targets = Matrix::from_vec2d(vec![vec![0.0], vec![1.0], vec![1.0], vec![0.0]]).unwrap();
 
     let mut network = Network::new(2, 4, 1); // Increased hidden layer size
 
@@ -215,11 +224,11 @@ fn network1() {
     let epochs = 100_000;
     println!(
         "Initial Cost: {}",
-        network.train_epoch(&inputs, &targets, 0.05)
+        network.train_epoch(&inputs, &targets, 0.05)?
     );
 
     for epoch in 0..epochs {
-        let cost = network.train_epoch(&inputs, &targets, learning_rate);
+        let cost = network.train_epoch(&inputs, &targets, learning_rate)?;
 
         if epoch % 1000 == 0 {
             println!("Epoch {}: cost = {}", epoch, cost);
@@ -228,9 +237,10 @@ fn network1() {
 
     for i in 0..2 {
         for j in 0..2 {
-            let input = Matrix::from_vec2d(vec![vec![i as f32, j as f32]]);
-            let output = network.forward(&input);
+            let input = Matrix::from_vec2d(vec![vec![i as f32, j as f32]]).unwrap();
+            let output = network.forward(&input)?;
             println!("{} XOR {} = {}", i, j, output[(0, 0)]);
         }
     }
+    Ok(())
 }
