@@ -8,14 +8,11 @@ pub struct DataSet {
 }
 
 impl DataSet {
-    pub fn new(data: Matrix<f32>, stride: usize) -> Self {
+    pub fn new(data: Matrix<f32>, stride: usize) -> Result<Self, &'static str> {
         if stride >= data.cols {
-            panic!("Stride must be less than the number of columns in the data matrix");
+            return Err("Stride must be less than the number of columns in the data matrix");
         }
-        Self {
-            data,
-            stride,
-        }
+        Ok(Self { data, stride })
     }
 
     pub fn inputs(&self) -> Vec<Matrix<f32>> {
@@ -227,9 +224,9 @@ impl NeuralNetwork {
         dataset: &DataSet,
         learning_rate: f32,
     ) -> Result<(), MatrixError> {
-        let inputs = dataset.inputs();
+        let samples = dataset.inputs();
         let targets = dataset.targets();
-        let batch_size = inputs.len();
+        let batch_size = samples.len();
 
         let mut weight_gradients: Vec<Matrix<f32>> = self
             .weights
@@ -242,7 +239,7 @@ impl NeuralNetwork {
             .map(|b| Matrix::new(b.rows, b.cols))
             .collect();
 
-        for (input, target) in inputs.iter().zip(targets.iter()) {
+        for (input, target) in samples.iter().zip(targets.iter()) {
             let activations = self.forward(input)?;
 
             // Calculate output layer error
@@ -313,22 +310,18 @@ impl std::fmt::Display for DataSet {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "DataSet {{\n")?;
         // [[inputs], [targets]] based on stride
-        self.data
-            .elements
-            .iter()
-            .enumerate()
-            .for_each(|(i, val)| {
-                if i % self.data.cols == 0 {
-                    write!(f, "  [").unwrap();
-                }
-                write!(f, "{}, ", val).unwrap();
-                if (i + 1) % self.data.cols == self.stride {
-                    write!(f, "|").unwrap();
-                }
-                if (i + 1) % self.data.cols == 0 {
-                    write!(f, "]\n").unwrap();
-                }
-            });
+        self.data.elements.iter().enumerate().for_each(|(i, val)| {
+            if i % self.data.cols == 0 {
+                write!(f, "  [").unwrap();
+            }
+            write!(f, "{}, ", val).unwrap();
+            if (i + 1) % self.data.cols == self.stride {
+                write!(f, "|").unwrap();
+            }
+            if (i + 1) % self.data.cols == 0 {
+                write!(f, "]\n").unwrap();
+            }
+        });
 
         write!(f, "}}")
     }
@@ -348,7 +341,7 @@ mod tests {
             vec![1.0, 1.0, 0.0],
         ])
         .unwrap();
-        let dataset = DataSet::new(xor_data, 2); // 2 input columns, 1 target column
+        let dataset = DataSet::new(xor_data, 2)?; // 2 input columns, 1 target column
 
         // NOTE: arch -> [inputs, [neurons in each layer]..., outputs]
         // NOTE: arch can be [2, 2, 1, 2] or [2, 5, 5, 7, 2]
@@ -396,7 +389,7 @@ mod tests {
             vec![1.0, 1.0, 1.0, 1.0, 1.0],
         ])
         .unwrap();
-        let dataset = DataSet::new(adder_data, 3); // 3 input columns, 2 target columns
+        let dataset = DataSet::new(adder_data, 3)?; // 3 input columns, 2 target columns
         println!("{dataset}");
 
         // Test predictions

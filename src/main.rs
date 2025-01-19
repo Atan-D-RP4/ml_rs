@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use ml_rs::matrix::{Matrix, MatrixError};
 use rand::Rng;
 
@@ -155,23 +157,16 @@ impl Network2 {
 }
 
 fn model_run() -> Result<(), Box<dyn std::error::Error>> {
-    use ml_rs::nn::DataSet;
-    let ds = DataSet::new(
-        Matrix::from_vec2d(vec![
-            vec![0.0, 0.0, 0.0],
-            vec![0.0, 1.0, 1.0],
-            vec![1.0, 0.0, 1.0],
-            vec![1.0, 1.0, 0.0],
-        ])
-        .unwrap(),
-        2,
-    );
-    println!("Data: {}", ds.data);
+    let inputs = Matrix::from_vec2d(vec![
+        vec![0.0, 0.0],
+        vec![0.0, 1.0],
+        vec![1.0, 0.0],
+        vec![1.0, 1.0],
+    ])
+    .unwrap();
+    let targets = Matrix::from_vec2d(vec![vec![0.0], vec![1.0], vec![1.0], vec![0.0]]).unwrap();
 
-    let inputs = ds.inputs_as_matrix();
     println!("Inputs: {}", inputs);
-
-    let targets = ds.targets_as_matrix();
     println!("Targets: {}", targets);
 
     let mut network = Network2::new(2, 3, 1);
@@ -201,6 +196,7 @@ fn model_run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    model_run()?;
+    // model_run()?;
+    ml_rs::simple_gates::gates();
     Ok(())
 }
