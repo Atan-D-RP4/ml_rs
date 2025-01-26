@@ -1,5 +1,6 @@
+#![allow(unused)]
 // This is a simple implementation of AND, OR, NAND gates using a simple neural network
-// consisting of a single 'Neuron'
+// consisting of a single 'Neuron' but 2 inputs and 1 output
 
 const TRAINING_SET_OR: [[f32; 3]; 4] = [
     [0.0, 0.0, 0.0],
@@ -40,19 +41,39 @@ fn cost_fn(weights: &[f32], bias: f32, data_set: &[[f32; 3]]) -> f32 {
     cost / data_set.len() as f32
 }
 
+fn cost_derivative(weights: &[f32], bias: f32, data_set: &[[f32; 3]]) -> (f32, f32, f32) {
+    let mut dw1 = 0.0;
+    let mut dw2 = 0.0;
+    let mut dbias = 0.0;
+    let n = data_set.len() as f32;
+    data_set.iter().for_each(|data| {
+        let x1 = data[0];
+        let x2 = data[1];
+        let y = data[2];
+        let di = sigmoid(weights[0] * x1 + weights[1] * x2 + bias);
+        let di = 2.0 * (di - y) * di * (1.0 - di);
+        dw1 += di * x1;
+        dw2 += di * x2;
+        dbias += di;
+    });
+    (dw1 / n, dw2 / n, dbias / n)
+}
+
 fn train_model(data_set: &[[f32; 3]]) -> (Vec<f32>, f32) {
-    let mut ws = vec![rand::random::<f32>(); 2];
+    let mut ws = vec![0.0; 2];
+    ws.iter_mut().for_each(|w| *w = rand::random::<f32>());
     let mut bias = rand::random::<f32>();
-    let eps = 1e-2;
+    let eps = 1e0;
     let rate = 1e-1;
 
-    let range = 0..1000 * 1000;
+    let range = 0..50_000;
     range.for_each(|_| {
         let cost = cost_fn(&ws, bias, data_set);
-        // println!("weights: {:?}, bias: {}, cost: {}", ws, bias, cost);
-        let dw1 = cost_fn(&[ws[0] + eps, ws[1]], bias, data_set) - cost;
-        let dw2 = cost_fn(&[ws[0], ws[1] + eps], bias, data_set) - cost;
-        let dbias = cost_fn(&ws, bias + eps, data_set) - cost;
+        println!("weights: {:?}, bias: {}, cost: {}", ws, bias, cost);
+        // let dw1 = cost_fn(&[ws[0] + eps, ws[1]], bias, data_set) - cost;
+        // let dw2 = cost_fn(&[ws[0], ws[1] + eps], bias, data_set) - cost;
+        // let dbias = cost_fn(&ws, bias + eps, data_set) - cost;
+        let (dw1, dw2, dbias) = cost_derivative(&ws, bias, data_set);
 
         ws[0] -= dw1 * rate;
         ws[1] -= dw2 * rate;
@@ -78,8 +99,11 @@ fn train_model(data_set: &[[f32; 3]]) -> (Vec<f32>, f32) {
 }
 
 pub fn gates() -> Result<(), Box<dyn std::error::Error>> {
-    let _model_and = train_model(&TRAINING_SET_AND);
-    let _model_or = train_model(&TRAINING_SET_OR);
-    let _model_nand = train_model(&TRAINING_SET_NAND);
+    println!("AND Gate:");
+    let model_and = train_model(&TRAINING_SET_AND);
+    // println!("OR Gate:");
+    // let model_or = train_model(&TRAINING_SET_OR);
+    // println!("NAND Gate:");
+    // let model_nand = train_model(&TRAINING_SET_NAND);
     Ok(())
 }

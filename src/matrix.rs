@@ -654,13 +654,13 @@ impl<'a, T: MatrixElement> MatrixViewMut<'a, T> {
             )));
         }
 
-        Ok( Self {
+        Ok(Self {
             elements: self.elements,
             rows,
             cols,
             stride: self.stride,
             offset: self.offset + row_start * self.stride + col_start,
-        } )
+        })
     }
 
     pub fn fill(&mut self, value: T) {
@@ -870,10 +870,7 @@ mod tests {
     fn test_matrix_inverse() {
         let m = Matrix::from_vec2d(vec![vec![1.0, 2.0], vec![3.0, 4.0]]).unwrap();
         let inv = m.inverse().unwrap();
-        let expected = Matrix::from_vec2d(vec![
-            vec![-2.0, 1.0],
-            vec![1.5, -0.5],
-        ]).unwrap();
+        let expected = Matrix::from_vec2d(vec![vec![-2.0, 1.0], vec![1.5, -0.5]]).unwrap();
         assert_matrix_eq(&inv, &expected);
     }
 
@@ -883,7 +880,8 @@ mod tests {
             vec![1.0, 2.0, 3.0],
             vec![4.0, 5.0, 6.0],
             vec![7.0, 8.0, 9.0],
-        ]).unwrap();
+        ])
+        .unwrap();
 
         // Test row view
         let row = m.row(1);

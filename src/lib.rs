@@ -1,3 +1,4 @@
+pub mod matrix_gates;
 pub mod complex_gates;
 pub mod backprop;
 pub mod matrix;

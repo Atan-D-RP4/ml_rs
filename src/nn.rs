@@ -1,16 +1,95 @@
-use crate::matrix::{Matrix, MatrixError};
+use crate::matrix::Matrix;
 use rand::distributions::Distribution;
+use std::{error::Error, fmt};
+
+#[derive(Debug)]
+pub enum NNError {
+    ArchitectureError {
+        msg: String,
+        details: Option<String>,
+    },
+    InputError {
+        msg: String,
+        expected_size: usize,
+        actual_size: usize,
+    },
+    DataSetError {
+        msg: String,
+        stride: usize,
+        total_columns: usize,
+    },
+    MatrixError {
+        msg: String,
+        operation: String,
+    },
+    TrainingError {
+        msg: String,
+        cost: Option<f32>,
+    },
+}
+
+impl fmt::Display for NNError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            NNError::ArchitectureError { msg, details } => {
+                write!(f, "Architecture Error: {}", msg)?;
+                if let Some(detail) = details {
+                    write!(f, " ({})", detail)?;
+                }
+                Ok(())
+            }
+            NNError::InputError {
+                msg,
+                expected_size,
+                actual_size,
+            } => {
+                write!(
+                    f,
+                    "Input Error: {} (expected {}, got {})",
+                    msg, expected_size, actual_size
+                )
+            }
+            NNError::DataSetError {
+                msg,
+                stride,
+                total_columns,
+            } => {
+                write!(
+                    f,
+                    "DataSet Error: {} (stride: {}, total columns: {})",
+                    msg, stride, total_columns
+                )
+            }
+            NNError::MatrixError { msg, operation } => {
+                write!(f, "Matrix Operation Error: {} during {}", msg, operation)
+            }
+            NNError::TrainingError { msg, cost } => {
+                write!(f, "Training Error: {}", msg)?;
+                if let Some(c) = cost {
+                    write!(f, " (current cost: {})", c)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl Error for NNError {}
 
 #[derive(Debug, Default)]
 pub struct DataSet {
     pub data: Matrix<f32>,
-    stride: usize,
+    pub stride: usize,
 }
 
 impl DataSet {
-    pub fn new(data: Matrix<f32>, stride: usize) -> Result<Self, &'static str> {
+    pub fn new(data: Matrix<f32>, stride: usize) -> Result<Self, NNError> {
         if stride >= data.cols {
-            return Err("Stride must be less than the number of columns in the data matrix");
+            return Err(NNError::DataSetError {
+                msg: "Stride cannot be greater than the total columns".to_string(),
+                stride,
+                total_columns: data.cols,
+            });
         }
         Ok(Self { data, stride })
     }
@@ -84,7 +163,7 @@ impl Activation {
         }
     }
 
-    fn derivative(&self, y: f32) -> f32 {
+    pub fn derivative(&self, y: f32) -> f32 {
         match self {
             Activation::Sigmoid => y * (1.0 - y),
             Activation::Relu(param) => {
@@ -108,37 +187,83 @@ impl Matrix<f32> {
     }
 }
 
+pub struct Architecture {
+    pub inputs: usize,
+    pub outputs: usize,
+    pub layers: &'static [usize],
+}
+
 #[derive(Debug)]
 pub struct NeuralNetwork {
     pub architecture: Vec<usize>,
     pub weights: Vec<Matrix<f32>>,
     pub biases: Vec<Matrix<f32>>,
     pub activation_fn: Activation,
+    activations: Vec<Matrix<f32>>,
 }
 
 impl NeuralNetwork {
-    pub fn new(architecture: &[usize], activation: Activation) -> Self {
-        assert!(architecture.len() >= 2);
+    pub fn validate_architecture(&self) -> Result<(), NNError> {
+        if self.architecture.is_empty() {
+            return Err(NNError::ArchitectureError {
+                msg: "Empty architecture".to_string(),
+                details: None,
+            });
+        }
 
+        if self.weights.len() != self.architecture.len() - 1 {
+            return Err(NNError::ArchitectureError {
+                msg: "Inconsistent weights and architecture".to_string(),
+                details: Some(format!(
+                    "Weights count: {}, Architecture layers: {}",
+                    self.weights.len(),
+                    self.architecture.len() - 1
+                )),
+            });
+        }
+
+        Ok(())
+    }
+    pub fn new(arch: Architecture, activation: Activation) -> Self {
         let mut weights = Vec::new();
         let mut biases = Vec::new();
 
-        for i in 0..architecture.len() - 1 {
+        let mut architecture = Vec::new();
+        architecture.push(arch.inputs);
+        arch.layers.iter().for_each(|neuron_count| {
+            architecture.push(*neuron_count);
+        });
+        architecture.push(arch.outputs);
+
+        let acts_count = architecture.len();
+        for i in 0..(acts_count - 1) {
             weights.push(Matrix::new(architecture[i], architecture[i + 1]));
             biases.push(Matrix::new(1, architecture[i + 1]));
         }
 
+        // Pre-allocate activations with correct dimensions
+        let mut activations = Vec::with_capacity(acts_count);
+        for size in &architecture {
+            activations.push(Matrix::new(1, *size));
+        }
+
         Self {
-            architecture: architecture.to_vec(),
+            architecture,
             weights,
             biases,
             activation_fn: activation,
+            activations,
         }
     }
 
-    pub fn init_parameters(&mut self, input_size: usize) -> Result<(), &str> {
+    pub fn init_parameters(&mut self, input_size: usize) -> Result<(), NNError> {
+        self.validate_architecture()?;
         if input_size != self.architecture[0] {
-            return Err("Input size does not match the size of the input layer");
+            return Err(NNError::InputError {
+                msg: "Input size does not match the size of the input layer".to_string(),
+                expected_size: self.architecture[0],
+                actual_size: input_size,
+            });
         }
         let scale = 1.0 / (input_size as f32).sqrt();
         let dist = rand::distributions::Uniform::new(-scale, scale);
@@ -159,38 +284,57 @@ impl NeuralNetwork {
         }
     }
 
-    pub fn predict(&mut self, input: &Matrix<f32>) -> Result<Matrix<f32>, MatrixError> {
-        assert_eq!(input.cols, self.architecture[0]);
-        let activations = self.forward(input)?;
-        Ok(activations.last().unwrap().clone())
+    pub fn predict(&mut self, input: &Matrix<f32>) -> Result<Matrix<f32>, NNError> {
+        self.forward(input)?;
+        Ok(self.activations.last().unwrap().clone())
     }
 
-    fn forward(&self, input: &Matrix<f32>) -> Result<Vec<Matrix<f32>>, MatrixError> {
-        // Set input layer
-        let mut activations = Vec::new();
-        for size in self.architecture.iter() {
-            activations.push(Matrix::new(1, *size));
+    fn forward(&mut self, input: &Matrix<f32>) -> Result<(), NNError> {
+        // Validate input dimensions
+        if input.cols != self.architecture[0] || input.rows != 1 {
+            return Err(NNError::InputError {
+                msg: "Invalid input dimensions".to_string(),
+                expected_size: self.architecture[0],
+                actual_size: input.cols,
+            });
         }
-        activations[0] = input.clone();
+
+        // Set input layer
+        self.activations[0] = input.clone();
 
         // Forward propagation
         for i in 0..self.weights.len() {
-            let activation = activations[i].dot(&self.weights[i])?;
-            activations[i + 1] = activation;
-            activations[i + 1].add(&self.biases[i])?;
-            activations[i + 1].apply_activation(self.activation_fn);
+            // Compute dot product and store in the next layer's activations
+            self.activations[i + 1] =
+                self.activations[i]
+                    .dot(&self.weights[i])
+                    .map_err(|e| NNError::MatrixError {
+                        msg: e.to_string(),
+                        operation: "dot product".to_string(),
+                    })?;
+
+            // Add biases
+            self.activations[i + 1]
+                .add(&self.biases[i])
+                .map_err(|e| NNError::MatrixError {
+                    msg: e.to_string(),
+                    operation: "dot product".to_string(),
+                })?;
+
+            // Apply activation function
+            self.activations[i + 1].apply_activation(self.activation_fn);
         }
-        Ok(activations)
+        Ok(())
     }
 
-    pub fn cost(&self, dataset: &DataSet) -> Result<f32, MatrixError> {
+    pub fn cost(&mut self, dataset: &DataSet) -> Result<f32, NNError> {
         let inputs = dataset.inputs();
         let targets = dataset.targets();
         let mut total_cost = 0.0;
 
         for (input, target) in inputs.iter().zip(targets.iter()) {
-            let activations = self.forward(input)?;
-            let output = &activations.last().unwrap().elements;
+            self.forward(input)?;
+            let output = &self.activations.last().unwrap().elements;
 
             for (out, target_val) in output.iter().zip(target.elements.iter()) {
                 let diff = out - target_val;
@@ -200,7 +344,6 @@ impl NeuralNetwork {
 
         Ok(total_cost / inputs.len() as f32)
     }
-
     fn learn(
         &mut self,
         w_gradients: Vec<Matrix<f32>>,
@@ -223,10 +366,10 @@ impl NeuralNetwork {
         &mut self,
         dataset: &DataSet,
         learning_rate: f32,
-    ) -> Result<(), MatrixError> {
-        let samples = dataset.inputs();
+    ) -> Result<(), NNError> {
+        let inputs = dataset.inputs();
         let targets = dataset.targets();
-        let batch_size = samples.len();
+        let batch_size = inputs.len();
 
         let mut weight_gradients: Vec<Matrix<f32>> = self
             .weights
@@ -239,12 +382,14 @@ impl NeuralNetwork {
             .map(|b| Matrix::new(b.rows, b.cols))
             .collect();
 
-        for (input, target) in samples.iter().zip(targets.iter()) {
-            let activations = self.forward(input)?;
+        for i in 0..inputs.len() {
+            let input = &inputs[i];
+            let target = &targets[i];
+            self.forward(input)?;
 
             // Calculate output layer error
             let mut deltas = vec![Matrix::new(1, self.architecture.last().unwrap().clone())];
-            let output_layer = activations.last().unwrap();
+            let output_layer = self.activations.last().unwrap();
 
             for j in 0..output_layer.cols {
                 let output = output_layer[(0, j)];
@@ -260,7 +405,7 @@ impl NeuralNetwork {
                 for i in 0..self.weights[layer].rows {
                     for j in 0..self.weights[layer].cols {
                         weight_gradients[layer][(i, j)] +=
-                            activations[layer][(0, i)] * delta[(0, j)];
+                            self.activations[layer][(0, i)] * delta[(0, j)];
                     }
                 }
 
@@ -275,8 +420,10 @@ impl NeuralNetwork {
                         for j in 0..delta.cols {
                             sum += self.weights[layer][(i, j)] * delta[(0, j)];
                         }
-                        new_delta[(0, i)] =
-                            sum * self.activation_fn.derivative(activations[layer][(0, i)]);
+                        new_delta[(0, i)] = sum
+                            * self
+                                .activation_fn
+                                .derivative(self.activations[layer][(0, i)]);
                     }
                     deltas[0] = new_delta;
                 }
@@ -345,16 +492,21 @@ mod tests {
 
         // NOTE: arch -> [inputs, [neurons in each layer]..., outputs]
         // NOTE: arch can be [2, 2, 1, 2] or [2, 5, 5, 7, 2]
-        let arch = [dataset.stride, 3, dataset.data.cols - dataset.stride]; // NOTE: [2, 3, 1] - 1 hidden layers
-        let mut nn = NeuralNetwork::new(&arch, Activation::Sigmoid);
-        // nn.init_parameters(dataset.stride)?;
+        let arch = Architecture {
+            inputs: dataset.stride,
+            layers: &[3],
+            outputs: dataset.data.cols - dataset.stride,
+        }; // NOTE: [2, 3, 1] - 1 hidden layers
+        let mut nn = NeuralNetwork::new(arch, Activation::Sigmoid);
         nn.init_parameters(dataset.stride)?;
         println!("{}", nn);
 
         let initial_cost = nn.cost(&dataset)?;
+        println!("Initial Cost: {}", initial_cost);
 
+        let start = std::time::Instant::now();
         // Train for a few epochs
-        for i in 0..40000 {
+        for i in 0..30000 {
             nn.backpropagation(&dataset, 1e-1)?;
             println!("{i}: Cost: {}", nn.cost(&dataset)?);
         }
@@ -372,6 +524,7 @@ mod tests {
                 assert_eq!(output[(0, 0)].round(), (i ^ j) as f32);
             });
         });
+        assert!(false);
         Ok(())
     }
 
@@ -398,8 +551,12 @@ mod tests {
             dataset.targets_as_matrix().to_vec2d(),
         );
 
-        let arch = [dataset.stride, 6, dataset.data.cols - dataset.stride];
-        let mut nn = NeuralNetwork::new(&arch, Activation::Sigmoid);
+        let arch = Architecture {
+            inputs: dataset.stride,
+            layers: &[6],
+            outputs: dataset.data.cols - dataset.stride,
+        };
+        let mut nn = NeuralNetwork::new(arch, Activation::Sigmoid);
         println!("Initialising parameters...");
         nn.init_parameters(dataset.stride)?;
         println!("{}", nn);
@@ -407,11 +564,13 @@ mod tests {
         let initial_cost = nn.cost(&dataset)?;
         println!("Initial Cost: {}", initial_cost);
 
+        let start = std::time::Instant::now();
         // Train for a few epochs
-        for i in 0..40000 {
+        for i in 0..30000 {
             nn.backpropagation(&dataset, 1e-1)?;
             println!("{i}: Cost: {}", nn.cost(&dataset)?);
         }
+        println!("Time Elapsed: {:?}", start.elapsed());
 
         let final_cost = nn.cost(&dataset)?;
         println!("Final Cost: {}", final_cost);
@@ -431,6 +590,7 @@ mod tests {
             assert_eq!(output[(0, 0)].round(), targets[i][0]);
             assert_eq!(output[(0, 1)].round(), targets[i][1]);
         }
+        assert!(false);
         Ok(())
     }
 }
