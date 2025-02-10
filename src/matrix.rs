@@ -101,6 +101,7 @@ impl<T: MatrixElement> IndexMut<(usize, usize)> for Matrix<T> {
     }
 }
 
+// Memory Operations
 impl<T: MatrixElement> Matrix<T> {
     pub fn new(rows: usize, cols: usize) -> Self {
         Self {
@@ -199,6 +200,64 @@ impl<T: MatrixElement> Matrix<T> {
         self.cols += other.cols;
         Ok(())
     }
+
+    pub fn row(&self, index: usize) -> MatrixView<T> {
+        assert!(index < self.rows);
+        MatrixView {
+            elements: &self.elements[index * self.cols..(index + 1) * self.cols],
+            rows: 1,
+            cols: self.cols,
+            stride: 1,
+            offset: 0,
+        }
+    }
+
+    pub fn row_mut(&mut self, index: usize) -> MatrixViewMut<T> {
+        assert!(index < self.rows);
+        let cols = self.cols;
+        MatrixViewMut {
+            elements: &mut self.elements[index * cols..(index + 1) * cols],
+            rows: 1,
+            cols,
+            stride: 1,
+            offset: 0,
+        }
+    }
+
+    pub fn col(&self, index: usize) -> MatrixView<T> {
+        assert!(index < self.cols);
+        MatrixView {
+            elements: self.elements.as_slice(),
+            rows: self.rows,
+            cols: 1,
+            stride: self.cols,
+            offset: index,
+        }
+    }
+
+    pub fn col_mut(&mut self, index: usize) -> MatrixViewMut<T> {
+        assert!(index < self.cols);
+        MatrixViewMut {
+            elements: self.elements.as_mut_slice(),
+            rows: self.rows,
+            cols: 1,
+            stride: self.cols,
+            offset: index,
+        }
+    }
+}
+
+impl<T: MatrixElement> Iterator for Matrix<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.elements.pop()
+    }
+}
+
+// Linear Algebra Operations
+impl<T: MatrixElement> Matrix<T> {
+    // NOTE: DONE
     pub fn randomize(&mut self, low: T, high: T) {
         for element in &mut self.elements {
             *element = T::random(low, high);
@@ -279,54 +338,6 @@ impl<T: MatrixElement> Matrix<T> {
         Ok(result)
     }
 
-    pub fn row(&self, index: usize) -> MatrixView<T> {
-        assert!(index < self.rows);
-        MatrixView {
-            elements: &self.elements[index * self.cols..(index + 1) * self.cols],
-            rows: 1,
-            cols: self.cols,
-            stride: 1,
-            offset: 0,
-        }
-    }
-
-    pub fn row_mut(&mut self, index: usize) -> MatrixViewMut<T> {
-        assert!(index < self.rows);
-        let cols = self.cols;
-        MatrixViewMut {
-            elements: &mut self.elements[index * cols..(index + 1) * cols],
-            rows: 1,
-            cols,
-            stride: 1,
-            offset: 0,
-        }
-    }
-
-    pub fn col(&self, index: usize) -> MatrixView<T> {
-        assert!(index < self.cols);
-        MatrixView {
-            elements: self.elements.as_slice(),
-            rows: self.rows,
-            cols: 1,
-            stride: self.cols,
-            offset: index,
-        }
-    }
-
-    pub fn col_mut(&mut self, index: usize) -> MatrixViewMut<T> {
-        assert!(index < self.cols);
-        MatrixViewMut {
-            elements: self.elements.as_mut_slice(),
-            rows: self.rows,
-            cols: 1,
-            stride: self.cols,
-            offset: index,
-        }
-    }
-}
-
-impl<T: MatrixElement> Matrix<T> {
-    // NOTE: DONE
     pub fn transpose(&mut self) -> Result<(), MatrixError> {
         let mut transposed = Matrix::new(self.cols, self.rows);
         for i in 0..self.rows {
@@ -719,13 +730,13 @@ impl<T: MatrixElement> Matrix<T> {
 
     pub fn apply_with_matrix<F>(&mut self, other: &Matrix<T>, f: F)
     where
-        F: Fn(T, T) -> T,
+        F: Fn(T, &Matrix<T>) -> T,
     {
         assert_eq!(self.rows, other.rows);
         assert_eq!(self.cols, other.cols);
 
         for i in 0..self.elements.len() {
-            self.elements[i] = f(self.elements[i], other.elements[i]);
+            self.elements[i] = f(self.elements[i], other);
         }
     }
 }
@@ -747,6 +758,7 @@ impl<T: MatrixElement> Display for Matrix<T> {
         Ok(())
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

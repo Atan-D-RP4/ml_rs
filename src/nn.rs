@@ -224,6 +224,7 @@ impl NeuralNetwork {
 
         Ok(())
     }
+
     pub fn new(arch: Architecture, activation: Activation) -> Self {
         let mut weights = Vec::new();
         let mut biases = Vec::new();
@@ -344,26 +345,60 @@ impl NeuralNetwork {
 
         Ok(total_cost / inputs.len() as f32)
     }
+
+    fn clip_gradients(gradient: &mut Matrix<f32>, threshold: f32) {
+        gradient.apply_fn(|x| x.clamp(-threshold, threshold));
+    }
+
     fn learn(
         &mut self,
-        w_gradients: Vec<Matrix<f32>>,
-        b_gradients: Vec<Matrix<f32>>,
+        w_gradients: &mut Vec<Matrix<f32>>,
+        b_gradients: &mut Vec<Matrix<f32>>,
         rate: f32,
         batch_size: usize,
-    ) {
-        let learning_rate = rate / batch_size as f32;
-        for i in 0..self.weights.len() {
-            for j in 0..self.weights[i].elements.len() {
-                self.weights[i].elements[j] -= learning_rate * w_gradients[i].elements[j];
-            }
-            for j in 0..self.biases[i].elements.len() {
-                self.biases[i].elements[j] -= learning_rate * b_gradients[i].elements[j];
+    ) -> Result<(), NNError> {
+        for gradient in &mut *w_gradients {
+            if gradient
+                .elements
+                .iter()
+                .any(|&x| x.is_nan() || x.is_infinite())
+            {
+                return Err(NNError::TrainingError {
+                    msg: "Gradient explosion detected".to_string(),
+                    cost: None,
+                });
             }
         }
+
+        for gradient in &mut *b_gradients {
+            if gradient
+                .elements
+                .iter()
+                .any(|&x| x.is_nan() || x.is_infinite())
+            {
+                return Err(NNError::TrainingError {
+                    msg: "Gradient explosion detected".to_string(),
+                    cost: None,
+                });
+            }
+        }
+
+        let learning_rate = rate / batch_size as f32;
+        for i in 0..self.weights.len() {
+            Self::clip_gradients(&mut w_gradients[i], 1.0);
+            Self::clip_gradients(&mut b_gradients[i], 1.0);
+            w_gradients[i].apply_fn(|x| x * learning_rate);
+            b_gradients[i].apply_fn(|x| x * learning_rate);
+            self.weights[i].sub(&w_gradients[i]).unwrap();
+            self.biases[i].sub(&b_gradients[i]).unwrap();
+        }
+        Ok(())
     }
 
     pub fn backpropagation(
         &mut self,
+        weight_gradients: &mut Vec<Matrix<f32>>,
+        bias_gradients: &mut Vec<Matrix<f32>>,
         dataset: &DataSet,
         learning_rate: f32,
     ) -> Result<(), NNError> {
@@ -371,37 +406,34 @@ impl NeuralNetwork {
         let targets = dataset.targets();
         let batch_size = inputs.len();
 
-        let mut weight_gradients: Vec<Matrix<f32>> = self
-            .weights
-            .iter()
-            .map(|w| Matrix::new(w.rows, w.cols))
-            .collect();
-        let mut bias_gradients: Vec<Matrix<f32>> = self
-            .biases
-            .iter()
-            .map(|b| Matrix::new(b.rows, b.cols))
-            .collect();
+        weight_gradients.iter_mut().for_each(|g| g.fill(0.0));
+        bias_gradients.iter_mut().for_each(|g| g.fill(0.0));
 
-        for i in 0..inputs.len() {
-            let input = &inputs[i];
-            let target = &targets[i];
+        let mut deltas = self
+            .architecture
+            .iter()
+            .map(|&size| Matrix::<f32>::new(1, size))
+            .collect::<Vec<Matrix<f32>>>();
+
+        for (input, target) in inputs.iter().zip(targets.iter()) {
             self.forward(input)?;
 
-            // Calculate output layer error
-            let mut deltas = vec![Matrix::new(1, self.architecture.last().unwrap().clone())];
-            let output_layer = self.activations.last().unwrap();
+            // Output layer error
+            let output_layer_idx = self.activations.len() - 1;
+            let output_layer = &mut self.activations[output_layer_idx];
 
+            // Compute output layer delta using element-wise operations
             for j in 0..output_layer.cols {
                 let output = output_layer[(0, j)];
                 let error = output - target[(0, j)];
-                deltas[0][(0, j)] = error * self.activation_fn.derivative(output);
+                deltas[output_layer_idx][(0, j)] = error * self.activation_fn.derivative(output);
             }
 
-            // Backpropagate error
+            // Backpropagate Error
             for layer in (0..self.weights.len()).rev() {
-                let delta = &deltas[0];
+                let delta = &deltas[layer + 1];
 
-                // Calculate gradients
+                // Weight gradients
                 for i in 0..self.weights[layer].rows {
                     for j in 0..self.weights[layer].cols {
                         weight_gradients[layer][(i, j)] +=
@@ -409,28 +441,30 @@ impl NeuralNetwork {
                     }
                 }
 
+                // Bias gradients
                 for j in 0..self.biases[layer].cols {
                     bias_gradients[layer][(0, j)] += delta[(0, j)];
                 }
 
                 if layer > 0 {
                     let mut new_delta = Matrix::new(1, self.architecture[layer]);
+
                     for i in 0..new_delta.cols {
                         let mut sum = 0.0;
                         for j in 0..delta.cols {
-                            sum += self.weights[layer][(i, j)] * delta[(0, j)];
+                            sum += delta[(0, j)] * self.weights[layer][(i, j)];
                         }
                         new_delta[(0, i)] = sum
                             * self
                                 .activation_fn
                                 .derivative(self.activations[layer][(0, i)]);
                     }
-                    deltas[0] = new_delta;
+                    deltas[layer] = new_delta;
                 }
             }
         }
 
-        self.learn(weight_gradients, bias_gradients, learning_rate, batch_size);
+        self.learn(weight_gradients, bias_gradients, learning_rate, batch_size)?;
         Ok(())
     }
 }
@@ -479,7 +513,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_bin_op_neural_network() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_bin_op_nn() -> Result<(), Box<dyn std::error::Error>> {
         // Create XOR training data using DataSet
         let xor_data = Matrix::from_vec2d(vec![
             vec![0.0, 0.0, 0.0],
@@ -499,6 +533,17 @@ mod tests {
         }; // NOTE: [2, 3, 1] - 1 hidden layers
         let mut nn = NeuralNetwork::new(arch, Activation::Sigmoid);
         nn.init_parameters(dataset.stride)?;
+        let mut bias_gradients: Vec<Matrix<f32>> = nn
+            .biases
+            .iter()
+            .map(|b| Matrix::new(b.rows, b.cols))
+            .collect();
+        let mut weight_gradients: Vec<Matrix<f32>> = nn
+            .weights
+            .iter()
+            .map(|w| Matrix::new(w.rows, w.cols))
+            .collect();
+
         println!("{}", nn);
 
         let initial_cost = nn.cost(&dataset)?;
@@ -507,12 +552,12 @@ mod tests {
         let start = std::time::Instant::now();
         // Train for a few epochs
         for i in 0..30000 {
-            nn.backpropagation(&dataset, 1e-1)?;
-            println!("{i}: Cost: {}", nn.cost(&dataset)?);
+            nn.backpropagation(&mut weight_gradients, &mut bias_gradients, &dataset, 1e0)?;
         }
 
         let final_cost = nn.cost(&dataset)?;
         println!("Final Cost: {}", final_cost);
+        println!("Time Elapsed: {:?}", start.elapsed());
         assert!(final_cost < initial_cost);
 
         // Test predictions
@@ -559,6 +604,17 @@ mod tests {
         let mut nn = NeuralNetwork::new(arch, Activation::Sigmoid);
         println!("Initialising parameters...");
         nn.init_parameters(dataset.stride)?;
+        let mut bias_gradients: Vec<Matrix<f32>> = nn
+            .biases
+            .iter()
+            .map(|b| Matrix::new(b.rows, b.cols))
+            .collect();
+        let mut weight_gradients: Vec<Matrix<f32>> = nn
+            .weights
+            .iter()
+            .map(|w| Matrix::new(w.rows, w.cols))
+            .collect();
+
         println!("{}", nn);
 
         let initial_cost = nn.cost(&dataset)?;
@@ -566,9 +622,8 @@ mod tests {
 
         let start = std::time::Instant::now();
         // Train for a few epochs
-        for i in 0..30000 {
-            nn.backpropagation(&dataset, 1e-1)?;
-            println!("{i}: Cost: {}", nn.cost(&dataset)?);
+        for i in 0..50000 {
+            nn.backpropagation(&mut weight_gradients, &mut bias_gradients, &dataset, 1e0)?;
         }
         println!("Time Elapsed: {:?}", start.elapsed());
 
