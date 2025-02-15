@@ -471,15 +471,6 @@ impl NeuralNetwork {
         }
         Ok(())
     }
-
-    fn compute_output_error(&self, output: &Matrix<f32>, target: &Matrix<f32>) -> f32 {
-        let mut error = 0.0;
-        for i in 0..output.cols {
-            let diff = output[(0, i)] - target[(0, i)];
-            error += diff * diff;
-        }
-        error
-    }
 }
 
 impl std::fmt::Display for NeuralNetwork {
