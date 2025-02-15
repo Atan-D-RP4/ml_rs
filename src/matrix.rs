@@ -1,7 +1,7 @@
 use rand::Rng;
 use std::error::Error;
 use std::{
-    fmt::{Debug, Display},
+    fmt::{self, Debug, Display},
     ops::{Add, AddAssign, Div, Index, IndexMut, Mul, MulAssign, Sub, SubAssign},
 };
 
@@ -13,8 +13,8 @@ pub enum MatrixError {
     SingularMatrix(String),
 }
 
-impl Display for MatrixError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl fmt::Display for MatrixError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             MatrixError::DimensionMismatch(msg) => write!(f, "Dimension Mismatch: {}", msg),
             MatrixError::IndexOutOfBounds(msg) => write!(f, "Index Out of Bounds: {}", msg),
@@ -265,7 +265,7 @@ impl<T: MatrixElement> Matrix<T> {
     }
 
     // NOTE: DONE
-    pub fn add(&mut self, other: &Matrix<T>) -> Result<(), MatrixError> {
+    pub fn add(&mut self, other: &Matrix<T>) -> Result<&Self, MatrixError> {
         if other.rows == 1 {
             if other.cols != self.cols {
                 return Err(MatrixError::DimensionMismatch(
@@ -277,7 +277,7 @@ impl<T: MatrixElement> Matrix<T> {
                     self[(i, j)] += other[(0, j)];
                 }
             }
-            return Ok(());
+            return Ok(self);
         }
 
         if self.rows != other.rows || self.cols != other.cols {
@@ -290,17 +290,17 @@ impl<T: MatrixElement> Matrix<T> {
         for i in 0..self.elements.len() {
             self.elements[i] += other.elements[i];
         }
-        return Ok(());
+        return Ok(self);
     }
 
     // NOTE: DONE
-    pub fn sub(&mut self, other: &Matrix<T>) -> Result<(), MatrixError> {
+    pub fn sub(&mut self, other: &Matrix<T>) -> Result<&Self, MatrixError> {
         if other.rows == 1 && other.cols == 1 {
             let scalar = other[(0, 0)];
             for element in &mut self.elements {
                 *element -= scalar;
             }
-            return Ok(());
+            return Ok(self);
         }
 
         if self.rows != other.rows || self.cols != other.cols {
@@ -313,11 +313,11 @@ impl<T: MatrixElement> Matrix<T> {
         for i in 0..self.elements.len() {
             self.elements[i] -= other.elements[i];
         }
-        Ok(())
+        Ok(self)
     }
 
     // NOTE: DONE
-    pub fn dot(&self, other: &Matrix<T>) -> Result<Matrix<T>, MatrixError> {
+    pub fn dot(&self, other: &Matrix<T>) -> Result<Self, MatrixError> {
         if self.cols != other.rows {
             return Err(MatrixError::DimensionMismatch(format!(
                 "Cannot multiply matrices of size {}x{} and {}x{}",
@@ -338,7 +338,7 @@ impl<T: MatrixElement> Matrix<T> {
         Ok(result)
     }
 
-    pub fn transpose(&mut self) -> Result<(), MatrixError> {
+    pub fn transpose(&mut self) -> Result<&Self, MatrixError> {
         let mut transposed = Matrix::new(self.cols, self.rows);
         for i in 0..self.rows {
             for j in 0..self.cols {
@@ -346,11 +346,11 @@ impl<T: MatrixElement> Matrix<T> {
             }
         }
         *self = transposed;
-        Ok(())
+        Ok(self)
     }
 
     // NOTE: DONE
-    pub fn minor(&self, row: usize, col: usize) -> Result<Matrix<T>, MatrixError> {
+    pub fn minor(&self, row: usize, col: usize) -> Result<Self, MatrixError> {
         if row >= self.rows || col >= self.cols {
             return Err(MatrixError::IndexOutOfBounds(format!(
                 "Cannot compute minor for position ({}, {}) in {}x{} matrix",
@@ -421,7 +421,7 @@ impl<T: MatrixElement> Matrix<T> {
 // Helper method to compute determinant with explicit sign handling
 impl<T: MatrixElement> Matrix<T> {
     // NOTE: DONE
-    pub fn adjugate(&self) -> Result<Matrix<T>, MatrixError> {
+    pub fn adjugate(&self) -> Result<Self, MatrixError> {
         if self.rows != self.cols {
             return Err(MatrixError::InvalidOperation(
                 "Cannot compute adjugate of non-square matrix".to_string(),
@@ -444,7 +444,7 @@ impl<T: MatrixElement> Matrix<T> {
     }
 
     // NOTE: DONE
-    pub fn inverse(&self) -> Result<Matrix<T>, MatrixError> {
+    pub fn inverse(&self) -> Result<Self, MatrixError> {
         if self.rows != self.cols {
             return Err(MatrixError::InvalidOperation(
                 "Cannot compute inverse of non-square matrix".to_string(),

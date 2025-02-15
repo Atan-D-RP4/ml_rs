@@ -1,31 +1,14 @@
-use crate::matrix::Matrix;
+use crate::matrix::{Matrix, MatrixError};
 use rand::distributions::Distribution;
 use std::{error::Error, fmt};
 
 #[derive(Debug)]
 pub enum NNError {
-    ArchitectureError {
-        msg: String,
-        details: Option<String>,
-    },
-    InputError {
-        msg: String,
-        expected_size: usize,
-        actual_size: usize,
-    },
-    DataSetError {
-        msg: String,
-        stride: usize,
-        total_columns: usize,
-    },
-    MatrixError {
-        msg: String,
-        operation: String,
-    },
-    TrainingError {
-        msg: String,
-        cost: Option<f32>,
-    },
+    ArchitectureError { msg: String, details: Option<String> },
+    InputError { msg: String, expected_size: usize, actual_size: usize },
+    DataSetError { msg: String, stride: usize, total_columns: usize },
+    MatrixError { msg: String, operation: String },
+    TrainingError { msg: String, cost: Option<f32> },
 }
 
 impl fmt::Display for NNError {
@@ -43,22 +26,10 @@ impl fmt::Display for NNError {
                 expected_size,
                 actual_size,
             } => {
-                write!(
-                    f,
-                    "Input Error: {} (expected {}, got {})",
-                    msg, expected_size, actual_size
-                )
+                write!(f, "Input Error: {} (expected {}, got {})", msg, expected_size, actual_size)
             }
-            NNError::DataSetError {
-                msg,
-                stride,
-                total_columns,
-            } => {
-                write!(
-                    f,
-                    "DataSet Error: {} (stride: {}, total columns: {})",
-                    msg, stride, total_columns
-                )
+            NNError::DataSetError { msg, stride, total_columns } => {
+                write!(f, "DataSet Error: {} (stride: {}, total columns: {})", msg, stride, total_columns)
             }
             NNError::MatrixError { msg, operation } => {
                 write!(f, "Matrix Operation Error: {} during {}", msg, operation)
@@ -75,6 +46,15 @@ impl fmt::Display for NNError {
 }
 
 impl Error for NNError {}
+
+impl From<MatrixError> for NNError {
+    fn from(error: MatrixError) -> Self {
+        NNError::MatrixError {
+            msg: error.to_string(),
+            operation: "Matrix Operation".to_string(),
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct DataSet {
@@ -108,12 +88,10 @@ impl DataSet {
 
     pub fn inputs_as_matrix(&self) -> Matrix<f32> {
         let inputs = self.inputs();
-        inputs
-            .iter()
-            .fold(Matrix::new(0, inputs[0].cols), |mut acc, x| {
-                acc.vstack(x).expect("Matrix stacking failed");
-                acc
-            })
+        inputs.iter().fold(Matrix::new(0, inputs[0].cols), |mut acc, x| {
+            acc.vstack(x).expect("Matrix stacking failed");
+            acc
+        })
     }
 
     pub fn targets(&self) -> Vec<Matrix<f32>> {
@@ -130,12 +108,10 @@ impl DataSet {
 
     pub fn targets_as_matrix(&self) -> Matrix<f32> {
         let targets = self.targets();
-        targets
-            .iter()
-            .fold(Matrix::new(0, targets[0].cols), |mut acc, x| {
-                acc.vstack(x).expect("Matrix stacking failed");
-                acc
-            })
+        targets.iter().fold(Matrix::new(0, targets[0].cols), |mut acc, x| {
+            acc.vstack(x).expect("Matrix stacking failed");
+            acc
+        })
     }
 }
 
@@ -306,21 +282,10 @@ impl NeuralNetwork {
         // Forward propagation
         for i in 0..self.weights.len() {
             // Compute dot product and store in the next layer's activations
-            self.activations[i + 1] =
-                self.activations[i]
-                    .dot(&self.weights[i])
-                    .map_err(|e| NNError::MatrixError {
-                        msg: e.to_string(),
-                        operation: "dot product".to_string(),
-                    })?;
+            self.activations[i + 1] = self.activations[i].dot(&self.weights[i])?;
 
             // Add biases
-            self.activations[i + 1]
-                .add(&self.biases[i])
-                .map_err(|e| NNError::MatrixError {
-                    msg: e.to_string(),
-                    operation: "dot product".to_string(),
-                })?;
+            self.activations[i + 1].add(&self.biases[i])?;
 
             // Apply activation function
             self.activations[i + 1].apply_activation(self.activation_fn);
@@ -350,32 +315,15 @@ impl NeuralNetwork {
         gradient.apply_fn(|x| x.clamp(-threshold, threshold));
     }
 
-    fn learn(
+    fn apply_gradients(
         &mut self,
         w_gradients: &mut Vec<Matrix<f32>>,
         b_gradients: &mut Vec<Matrix<f32>>,
         rate: f32,
         batch_size: usize,
     ) -> Result<(), NNError> {
-        for gradient in &mut *w_gradients {
-            if gradient
-                .elements
-                .iter()
-                .any(|&x| x.is_nan() || x.is_infinite())
-            {
-                return Err(NNError::TrainingError {
-                    msg: "Gradient explosion detected".to_string(),
-                    cost: None,
-                });
-            }
-        }
-
-        for gradient in &mut *b_gradients {
-            if gradient
-                .elements
-                .iter()
-                .any(|&x| x.is_nan() || x.is_infinite())
-            {
+        for gradient in w_gradients.iter_mut().chain(b_gradients.iter_mut()) {
+            if gradient.elements.iter().any(|&x| x.is_nan() || x.is_infinite()) {
                 return Err(NNError::TrainingError {
                     msg: "Gradient explosion detected".to_string(),
                     cost: None,
@@ -389,8 +337,8 @@ impl NeuralNetwork {
             Self::clip_gradients(&mut b_gradients[i], 1.0);
             w_gradients[i].apply_fn(|x| x * learning_rate);
             b_gradients[i].apply_fn(|x| x * learning_rate);
-            self.weights[i].sub(&w_gradients[i]).unwrap();
-            self.biases[i].sub(&b_gradients[i]).unwrap();
+            self.weights[i].sub(&w_gradients[i])?;
+            self.biases[i].sub(&b_gradients[i])?;
         }
         Ok(())
     }
@@ -406,8 +354,8 @@ impl NeuralNetwork {
         let targets = dataset.targets();
         let batch_size = inputs.len();
 
-        weight_gradients.iter_mut().for_each(|g| g.fill(0.0));
-        bias_gradients.iter_mut().for_each(|g| g.fill(0.0));
+        // Reset gradients
+        weight_gradients.iter_mut().chain(bias_gradients.iter_mut()).for_each(|g| g.fill(0.0));
 
         let mut deltas = self
             .architecture
@@ -421,12 +369,12 @@ impl NeuralNetwork {
             // Output layer error
             let output_layer_idx = self.activations.len() - 1;
             let output_layer = &mut self.activations[output_layer_idx];
+            let mut error = output_layer.clone();
+            let error = error.sub(target)?;
+            output_layer.apply_fn(|x| self.activation_fn.derivative(x));
 
-            // Compute output layer delta using element-wise operations
             for j in 0..output_layer.cols {
-                let output = output_layer[(0, j)];
-                let error = output - target[(0, j)];
-                deltas[output_layer_idx][(0, j)] = error * self.activation_fn.derivative(output);
+                deltas[output_layer_idx][(0, j)] = error[(0, j)] * output_layer[(0, j)];
             }
 
             // Backpropagate Error
@@ -436,35 +384,36 @@ impl NeuralNetwork {
                 // Weight gradients
                 for i in 0..self.weights[layer].rows {
                     for j in 0..self.weights[layer].cols {
-                        weight_gradients[layer][(i, j)] +=
-                            self.activations[layer][(0, i)] * delta[(0, j)];
+                        weight_gradients[layer][(i, j)] += self.activations[layer][(0, i)] * delta[(0, j)];
                     }
                 }
 
                 // Bias gradients
-                for j in 0..self.biases[layer].cols {
-                    bias_gradients[layer][(0, j)] += delta[(0, j)];
-                }
+                bias_gradients[layer].add(delta)?;
 
-                if layer > 0 {
-                    let mut new_delta = Matrix::new(1, self.architecture[layer]);
+                let mut new_delta = Matrix::new(1, self.architecture[layer]);
 
-                    for i in 0..new_delta.cols {
-                        let mut sum = 0.0;
-                        for j in 0..delta.cols {
-                            sum += delta[(0, j)] * self.weights[layer][(i, j)];
-                        }
-                        new_delta[(0, i)] = sum
-                            * self
-                                .activation_fn
-                                .derivative(self.activations[layer][(0, i)]);
+                for i in 0..new_delta.cols {
+                    for j in 0..delta.cols {
+                        new_delta[(0, i)] += delta[(0, j)] * self.weights[layer][(i, j)];
                     }
-                    deltas[layer] = new_delta;
+                    new_delta[(0, i)] *= self.activation_fn.derivative(self.activations[layer][(0, i)]);
                 }
+                deltas[layer] = new_delta;
             }
         }
 
-        self.learn(weight_gradients, bias_gradients, learning_rate, batch_size)?;
+        self.apply_gradients(weight_gradients, bias_gradients, learning_rate, batch_size)?;
+        Ok(())
+    }
+
+    pub fn learn(&mut self, epochs: usize, dataset: &DataSet, learning_rate: f32) -> Result<(), NNError> {
+        let mut weight_gradients: Vec<Matrix<f32>> = self.weights.iter().map(|w| Matrix::new(w.rows, w.cols)).collect();
+        let mut bias_gradients: Vec<Matrix<f32>> = self.biases.iter().map(|b| Matrix::new(b.rows, b.cols)).collect();
+
+        for _ in 0..epochs {
+            self.backpropagation(&mut weight_gradients, &mut bias_gradients, dataset, learning_rate)?;
+        }
         Ok(())
     }
 }
@@ -515,13 +464,7 @@ mod tests {
     #[test]
     fn test_bin_op_nn() -> Result<(), Box<dyn std::error::Error>> {
         // Create XOR training data using DataSet
-        let xor_data = Matrix::from_vec2d(vec![
-            vec![0.0, 0.0, 0.0],
-            vec![0.0, 1.0, 1.0],
-            vec![1.0, 0.0, 1.0],
-            vec![1.0, 1.0, 0.0],
-        ])
-        .unwrap();
+        let xor_data = Matrix::from_vec2d(vec![vec![0.0, 0.0, 0.0], vec![0.0, 1.0, 1.0], vec![1.0, 0.0, 1.0], vec![1.0, 1.0, 0.0]]).unwrap();
         let dataset = DataSet::new(xor_data, 2)?; // 2 input columns, 1 target column
 
         // NOTE: arch -> [inputs, [neurons in each layer]..., outputs]
@@ -533,17 +476,6 @@ mod tests {
         }; // NOTE: [2, 3, 1] - 1 hidden layers
         let mut nn = NeuralNetwork::new(arch, Activation::Sigmoid);
         nn.init_parameters(dataset.stride)?;
-        let mut bias_gradients: Vec<Matrix<f32>> = nn
-            .biases
-            .iter()
-            .map(|b| Matrix::new(b.rows, b.cols))
-            .collect();
-        let mut weight_gradients: Vec<Matrix<f32>> = nn
-            .weights
-            .iter()
-            .map(|w| Matrix::new(w.rows, w.cols))
-            .collect();
-
         println!("{}", nn);
 
         let initial_cost = nn.cost(&dataset)?;
@@ -551,13 +483,11 @@ mod tests {
 
         let start = std::time::Instant::now();
         // Train for a few epochs
-        for i in 0..30000 {
-            nn.backpropagation(&mut weight_gradients, &mut bias_gradients, &dataset, 1e0)?;
-        }
+        nn.learn(50000, &dataset, 1e0)?;
+        println!("Time Elapsed: {:?}", start.elapsed());
 
         let final_cost = nn.cost(&dataset)?;
         println!("Final Cost: {}", final_cost);
-        println!("Time Elapsed: {:?}", start.elapsed());
         assert!(final_cost < initial_cost);
 
         // Test predictions
@@ -591,10 +521,7 @@ mod tests {
         println!("{dataset}");
 
         // Test predictions
-        let (inputs, targets) = (
-            dataset.inputs_as_matrix().to_vec2d(),
-            dataset.targets_as_matrix().to_vec2d(),
-        );
+        let (inputs, targets) = (dataset.inputs_as_matrix().to_vec2d(), dataset.targets_as_matrix().to_vec2d());
 
         let arch = Architecture {
             inputs: dataset.stride,
@@ -604,30 +531,16 @@ mod tests {
         let mut nn = NeuralNetwork::new(arch, Activation::Sigmoid);
         println!("Initialising parameters...");
         nn.init_parameters(dataset.stride)?;
-        let mut bias_gradients: Vec<Matrix<f32>> = nn
-            .biases
-            .iter()
-            .map(|b| Matrix::new(b.rows, b.cols))
-            .collect();
-        let mut weight_gradients: Vec<Matrix<f32>> = nn
-            .weights
-            .iter()
-            .map(|w| Matrix::new(w.rows, w.cols))
-            .collect();
-
         println!("{}", nn);
 
         let initial_cost = nn.cost(&dataset)?;
         println!("Initial Cost: {}", initial_cost);
 
         let start = std::time::Instant::now();
-        // Train for a few epochs
-        for i in 0..50000 {
-            nn.backpropagation(&mut weight_gradients, &mut bias_gradients, &dataset, 1e0)?;
-        }
+        nn.learn(50000, &dataset, 1e0)?;
+        let final_cost = nn.cost(&dataset)?;
         println!("Time Elapsed: {:?}", start.elapsed());
 
-        let final_cost = nn.cost(&dataset)?;
         println!("Final Cost: {}", final_cost);
         assert!(final_cost < initial_cost);
 

@@ -79,7 +79,6 @@ impl NeuralNetworkMin {
         let targets = dataset.targets();
         let batch_size = inputs.len();
 
-        let base_cost = self.cost(&dataset)?;
         let mut weight_gradients: Vec<Matrix<f32>> = self
             .weights
             .iter()
