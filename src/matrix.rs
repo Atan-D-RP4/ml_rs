@@ -265,7 +265,7 @@ impl<T: MatrixElement> Matrix<T> {
     }
 
     // NOTE: DONE
-    pub fn add(&mut self, other: &Matrix<T>) -> Result<&Self, MatrixError> {
+    pub fn add(&mut self, other: &Matrix<T>) -> Result<&mut Self, MatrixError> {
         if other.rows == 1 {
             if other.cols != self.cols {
                 return Err(MatrixError::DimensionMismatch(
@@ -294,7 +294,7 @@ impl<T: MatrixElement> Matrix<T> {
     }
 
     // NOTE: DONE
-    pub fn sub(&mut self, other: &Matrix<T>) -> Result<&Self, MatrixError> {
+    pub fn sub(&mut self, other: &Matrix<T>) -> Result<&mut Self, MatrixError> {
         if other.rows == 1 && other.cols == 1 {
             let scalar = other[(0, 0)];
             for element in &mut self.elements {
@@ -338,7 +338,7 @@ impl<T: MatrixElement> Matrix<T> {
         Ok(result)
     }
 
-    pub fn transpose(&mut self) -> Result<&Self, MatrixError> {
+    pub fn transpose(&mut self) -> Result<&mut Self, MatrixError> {
         let mut transposed = Matrix::new(self.cols, self.rows);
         for i in 0..self.rows {
             for j in 0..self.cols {

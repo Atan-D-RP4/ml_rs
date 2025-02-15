@@ -156,10 +156,11 @@ impl Activation {
 }
 
 impl Matrix<f32> {
-    pub fn apply_activation(&mut self, activation: Activation) {
+    pub fn apply_activation(&mut self, activation: Activation) -> &mut Self {
         for element in &mut self.elements {
             *element = activation.forward(*element);
         }
+        self
     }
 }
 
@@ -282,13 +283,11 @@ impl NeuralNetwork {
         // Forward propagation
         for i in 0..self.weights.len() {
             // Compute dot product and store in the next layer's activations
-            self.activations[i + 1] = self.activations[i].dot(&self.weights[i])?;
-
-            // Add biases
-            self.activations[i + 1].add(&self.biases[i])?;
-
-            // Apply activation function
-            self.activations[i + 1].apply_activation(self.activation_fn);
+            self.activations[i + 1] = self.activations[i]
+                .dot(&self.weights[i])? // Dot product with weights
+                .add(&self.biases[i])? // Add bias
+                .apply_activation(self.activation_fn) // Apply activation function
+                .to_owned();
         }
         Ok(())
     }
@@ -327,19 +326,11 @@ impl NeuralNetwork {
         let batch_size = inputs.len();
 
         // Pre-allocate vectors for better performance
-        let layer_count = self.architecture.len();
-        let mut deltas: Vec<Matrix<f32>> = Vec::with_capacity(layer_count);
-        let mut layer_outputs: Vec<Matrix<f32>> = Vec::with_capacity(layer_count);
+        let mut deltas = self.activations.iter().map(|a| Matrix::new(1, a.cols)).collect::<Vec<Matrix<f32>>>();
 
         // Initialize gradients to zero
         for gradient in weight_gradients.iter_mut().chain(bias_gradients.iter_mut()) {
             gradient.fill(0.0);
-        }
-
-        // Pre-allocate matrices for each layer
-        for &size in &self.architecture {
-            deltas.push(Matrix::new(1, size));
-            layer_outputs.push(Matrix::new(1, size));
         }
 
         let mut current_cost = 0.0;
@@ -347,33 +338,31 @@ impl NeuralNetwork {
 
         for (batch_idx, (input, target)) in inputs.iter().zip(targets.iter()).enumerate() {
             // Forward pass with cached activations
-            self.forward_with_cache(input, &mut layer_outputs)?;
+            self.forward(input)?;
 
             // Compute output layer error and gradients
-            let output_layer_idx = layer_count - 1;
-            let output_error = self.compute_output_error(&layer_outputs[output_layer_idx], target);
-
+            let output_layer_idx = self.activations.len() - 1;
+            let ouput = &self.activations[output_layer_idx];
+            let delta = &mut deltas[output_layer_idx];
+            let output_error = self.compute_output_error(ouput, target, delta)?;
             current_cost += output_error;
 
             // Backpropagate through hidden layers
             for layer in (0..self.weights.len()).rev() {
-                let gradient_norm = self.compute_layer_gradients(layer, &layer_outputs, &deltas, weight_gradients, bias_gradients)?;
+                let gradient_norm = self.compute_layer_gradients(layer, &self.activations, &deltas, weight_gradients, bias_gradients)?;
 
                 max_gradient_norm = max_gradient_norm.max(gradient_norm);
 
                 if layer > 0 {
                     let next_delta = &deltas[layer + 1].clone();
-                    self.compute_layer_delta(next_delta, &self.weights[layer], &layer_outputs[layer], &mut deltas[layer])?;
+                    self.compute_layer_delta(next_delta, &self.weights[layer], &self.activations[layer], &mut deltas[layer])?;
                 }
             }
 
             // Check for training issues
             if max_gradient_norm > 10.0 {
                 return Err(NNError::TrainingError {
-                    msg: format!(
-                        "Gradient explosion detected at batch: {} (max gradient: {})",
-                        batch_idx, max_gradient_norm
-                    ),
+                    msg: format!("Gradient norm exploded at batch: {} (norm: {})", batch_idx, max_gradient_norm),
                     cost: Some(current_cost),
                 });
             }
@@ -382,18 +371,6 @@ impl NeuralNetwork {
         // Apply gradients with momentum and adaptive learning rate
         self.apply_gradients_advanced(weight_gradients, bias_gradients, learning_rate, batch_size, max_gradient_norm)?;
 
-        Ok(())
-    }
-
-    fn forward_with_cache(&mut self, input: &Matrix<f32>, layer_outputs: &mut Vec<Matrix<f32>>) -> Result<(), NNError> {
-        layer_outputs[0] = input.clone();
-
-        for i in 0..self.weights.len() {
-            // Compute layer output
-            layer_outputs[i + 1] = layer_outputs[i].dot(&self.weights[i])?;
-            layer_outputs[i + 1].add(&self.biases[i])?;
-            layer_outputs[i + 1].apply_activation(self.activation_fn);
-        }
         Ok(())
     }
 
@@ -437,6 +414,20 @@ impl NeuralNetwork {
             current_delta[(0, i)] = sum * self.activation_fn.derivative(layer_output[(0, i)]);
         }
         Ok(())
+    }
+
+    fn compute_output_error(&self, output: &Matrix<f32>, target: &Matrix<f32>, delta: &mut Matrix<f32>) -> Result<f32, NNError> {
+        let mut error = output.clone();
+        error.sub(target)?;
+
+        let mut total_error = 0.0;
+        for j in 0..output.cols {
+            let err = error[(0, j)];
+            total_error += err * err;
+            delta[(0, j)] = err * self.activation_fn.derivative(output[(0, j)]);
+        }
+
+        Ok(total_error)
     }
 
     fn apply_gradients_advanced(
