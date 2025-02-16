@@ -1,119 +1,8 @@
-use crate::matrix::{Matrix, MatrixError};
+use crate::{
+    matrix::Matrix,
+    nn::{dataset::DataSet, error::NNError},
+};
 use rand::distributions::Distribution;
-use std::{error::Error, fmt};
-
-#[derive(Debug)]
-pub enum NNError {
-    ArchitectureError { msg: String, details: Option<String> },
-    InputError { msg: String, expected_size: usize, actual_size: usize },
-    DataSetError { msg: String, stride: usize, total_columns: usize },
-    MatrixError { msg: String, operation: String },
-    TrainingError { msg: String, cost: Option<f32> },
-}
-
-impl fmt::Display for NNError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            NNError::ArchitectureError { msg, details } => {
-                write!(f, "Architecture Error: {}", msg)?;
-                if let Some(detail) = details {
-                    write!(f, " ({})", detail)?;
-                }
-                Ok(())
-            }
-            NNError::InputError {
-                msg,
-                expected_size,
-                actual_size,
-            } => {
-                write!(f, "Input Error: {} (expected {}, got {})", msg, expected_size, actual_size)
-            }
-            NNError::DataSetError { msg, stride, total_columns } => {
-                write!(f, "DataSet Error: {} (stride: {}, total columns: {})", msg, stride, total_columns)
-            }
-            NNError::MatrixError { msg, operation } => {
-                write!(f, "Matrix Operation Error: {} during {}", msg, operation)
-            }
-            NNError::TrainingError { msg, cost } => {
-                write!(f, "Training Error: {}", msg)?;
-                if let Some(c) = cost {
-                    write!(f, " (current cost: {})", c)?;
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-impl Error for NNError {}
-
-impl From<MatrixError> for NNError {
-    fn from(error: MatrixError) -> Self {
-        NNError::MatrixError {
-            msg: error.to_string(),
-            operation: "Matrix Operation".to_string(),
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct DataSet {
-    pub data: Matrix<f32>,
-    pub stride: usize,
-}
-
-impl DataSet {
-    pub fn new(data: Matrix<f32>, stride: usize) -> Result<Self, NNError> {
-        if stride >= data.cols {
-            return Err(NNError::DataSetError {
-                msg: "Stride cannot be greater than the total columns".to_string(),
-                stride,
-                total_columns: data.cols,
-            });
-        }
-        Ok(Self { data, stride })
-    }
-
-    pub fn inputs(&self) -> Vec<Matrix<f32>> {
-        let mut inputs = Vec::new();
-        for i in 0..self.data.rows {
-            let mut inp_row = Vec::new();
-            for j in 0..self.stride {
-                inp_row.push(self.data[(i, j)]);
-            }
-            inputs.push(Matrix::from_vec2d(vec![inp_row]).unwrap());
-        }
-        inputs
-    }
-
-    pub fn inputs_as_matrix(&self) -> Matrix<f32> {
-        let inputs = self.inputs();
-        inputs.iter().fold(Matrix::new(0, inputs[0].cols), |mut acc, x| {
-            acc.vstack(x).expect("Matrix stacking failed");
-            acc
-        })
-    }
-
-    pub fn targets(&self) -> Vec<Matrix<f32>> {
-        let mut targets = Vec::new();
-        for i in 0..self.data.rows {
-            let mut target_row = Vec::new();
-            for j in self.stride..self.data.cols {
-                target_row.push(self.data[(i, j)]);
-            }
-            targets.push(Matrix::from_vec2d(vec![target_row]).unwrap());
-        }
-        targets
-    }
-
-    pub fn targets_as_matrix(&self) -> Matrix<f32> {
-        let targets = self.targets();
-        targets.iter().fold(Matrix::new(0, targets[0].cols), |mut acc, x| {
-            acc.vstack(x).expect("Matrix stacking failed");
-            acc
-        })
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Activation {
@@ -164,15 +53,53 @@ impl Matrix<f32> {
     }
 }
 
+#[derive(Debug)]
 pub struct Architecture {
     pub inputs: usize,
-    pub outputs: usize,
     pub layers: &'static [usize],
+    pub outputs: usize,
+    pub layer_count: usize,
+}
+
+impl Architecture {
+    pub fn new() -> Self {
+        Self {
+            inputs: 0,
+            layers: &[],
+            outputs: 0,
+            layer_count: 0,
+        }
+    }
+
+    pub fn with(inputs: usize, layers: &'static [usize], outputs: usize) -> Self {
+        Self {
+            inputs,
+            layers,
+            outputs,
+            layer_count: layers.len() + 2,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), NNError> {
+        if self.inputs == 0 {
+            return Err(NNError::ArchitectureError {
+                msg: "Input layer size is zero".to_string(),
+                details: Some("Input layer size must be greater than zero".to_string()),
+            });
+        }
+        if self.outputs == 0 {
+            return Err(NNError::ArchitectureError {
+                msg: "Output layer size is zero".to_string(),
+                details: Some("Output layer size must be greater than zero".to_string()),
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
 pub struct NeuralNetwork {
-    pub architecture: Vec<usize>,
+    pub arch: Architecture,
     pub weights: Vec<Matrix<f32>>,
     pub biases: Vec<Matrix<f32>>,
     pub activation_fn: Activation,
@@ -180,73 +107,50 @@ pub struct NeuralNetwork {
 }
 
 impl NeuralNetwork {
-    pub fn validate_architecture(&self) -> Result<(), NNError> {
-        if self.architecture.is_empty() {
-            return Err(NNError::ArchitectureError {
-                msg: "Empty architecture".to_string(),
-                details: None,
-            });
+    pub fn new(arch: Architecture, activation_fn: Activation) -> Result<Self, NNError> {
+        arch.validate()?;
+        let mut weights: Vec<Matrix<f32>> = Vec::new();
+        let mut biases: Vec<Matrix<f32>> = Vec::new();
+
+        // Initialize weights and biases
+        weights.push(Matrix::new(arch.inputs, arch.layers[0]));
+        biases.push(Matrix::new(1, arch.layers[0]));
+        for i in 0..arch.layers.len() - 1 {
+            weights.push(Matrix::new(arch.layers[i], arch.layers[i + 1]));
+            biases.push(Matrix::new(1, arch.layers[i + 1]));
         }
-
-        if self.weights.len() != self.architecture.len() - 1 {
-            return Err(NNError::ArchitectureError {
-                msg: "Inconsistent weights and architecture".to_string(),
-                details: Some(format!(
-                    "Weights count: {}, Architecture layers: {}",
-                    self.weights.len(),
-                    self.architecture.len() - 1
-                )),
-            });
-        }
-
-        Ok(())
-    }
-
-    pub fn new(arch: Architecture, activation: Activation) -> Self {
-        let mut weights = Vec::new();
-        let mut biases = Vec::new();
-
-        let mut architecture = Vec::new();
-        architecture.push(arch.inputs);
-        arch.layers.iter().for_each(|neuron_count| {
-            architecture.push(*neuron_count);
-        });
-        architecture.push(arch.outputs);
-
-        let acts_count = architecture.len();
-        for i in 0..(acts_count - 1) {
-            weights.push(Matrix::new(architecture[i], architecture[i + 1]));
-            biases.push(Matrix::new(1, architecture[i + 1]));
-        }
+        weights.push(Matrix::new(arch.layers[arch.layers.len() - 1], arch.outputs));
+        biases.push(Matrix::new(1, arch.outputs));
 
         // Pre-allocate activations with correct dimensions
-        let mut activations = Vec::with_capacity(acts_count);
-        for size in &architecture {
+        let mut activations = Vec::with_capacity(arch.layer_count);
+        activations.push(Matrix::new(1, arch.inputs));
+        arch.layers.iter().for_each(|size| {
             activations.push(Matrix::new(1, *size));
-        }
+        });
+        activations.push(Matrix::new(1, arch.outputs));
 
-        Self {
-            architecture,
+        Ok(Self {
+            arch,
             weights,
             biases,
-            activation_fn: activation,
+            activation_fn,
             activations,
-        }
+        })
     }
 
     pub fn init_parameters(&mut self, input_size: usize) -> Result<(), NNError> {
-        self.validate_architecture()?;
-        if input_size != self.architecture[0] {
+        if input_size != self.arch.inputs {
             return Err(NNError::InputError {
                 msg: "Input size does not match the size of the input layer".to_string(),
-                expected_size: self.architecture[0],
+                expected_size: self.arch.inputs,
                 actual_size: input_size,
             });
         }
         let scale = 1.0 / (input_size as f32).sqrt();
         let dist = rand::distributions::Uniform::new(-scale, scale);
 
-        for i in 0..self.architecture.len() - 1 {
+        for i in 0..self.arch.layer_count - 1 {
             self.weights[i].apply_fn(|_| dist.sample(&mut rand::thread_rng()));
             self.biases[i].randomize(scale, -scale);
         }
@@ -269,10 +173,10 @@ impl NeuralNetwork {
 
     fn forward(&mut self, input: &Matrix<f32>) -> Result<(), NNError> {
         // Validate input dimensions
-        if input.cols != self.architecture[0] || input.rows != 1 {
+        if input.cols != self.arch.inputs || input.rows != 1 {
             return Err(NNError::InputError {
                 msg: "Invalid input dimensions".to_string(),
-                expected_size: self.architecture[0],
+                expected_size: self.arch.inputs,
                 actual_size: input.cols,
             });
         }
@@ -476,7 +380,7 @@ impl NeuralNetwork {
 impl std::fmt::Display for NeuralNetwork {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "NeuralNetwork {{\n")?;
-        write!(f, "Architecture: {:?}\n", self.architecture)?;
+        write!(f, "Architecture: {:?}\n", self.arch)?;
         write!(f, "Weights: [")?;
         for weight in &self.weights {
             write!(f, "{}]\n", weight)?;
@@ -488,129 +392,5 @@ impl std::fmt::Display for NeuralNetwork {
         }
         write!(f, "]\n")?;
         write!(f, "}}")
-    }
-}
-
-impl std::fmt::Display for DataSet {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "DataSet {{\n")?;
-        // [[inputs], [targets]] based on stride
-        self.data.elements.iter().enumerate().for_each(|(i, val)| {
-            if i % self.data.cols == 0 {
-                write!(f, "  [").unwrap();
-            }
-            write!(f, "{}, ", val).unwrap();
-            if (i + 1) % self.data.cols == self.stride {
-                write!(f, "|").unwrap();
-            }
-            if (i + 1) % self.data.cols == 0 {
-                write!(f, "]\n").unwrap();
-            }
-        });
-
-        write!(f, "}}")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_bin_op_nn() -> Result<(), Box<dyn std::error::Error>> {
-        // Create XOR training data using DataSet
-        let xor_data = Matrix::from_vec2d(vec![vec![0.0, 0.0, 0.0], vec![0.0, 1.0, 1.0], vec![1.0, 0.0, 1.0], vec![1.0, 1.0, 0.0]]).unwrap();
-        let dataset = DataSet::new(xor_data, 2)?; // 2 input columns, 1 target column
-
-        // NOTE: arch -> [inputs, [neurons in each layer]..., outputs]
-        // NOTE: arch can be [2, 2, 1, 2] or [2, 5, 5, 7, 2]
-        let arch = Architecture {
-            inputs: dataset.stride,
-            layers: &[3],
-            outputs: dataset.data.cols - dataset.stride,
-        }; // NOTE: [2, 3, 1] - 1 hidden layers
-        let mut nn = NeuralNetwork::new(arch, Activation::Sigmoid);
-        nn.init_parameters(dataset.stride)?;
-
-        let initial_cost = nn.cost(&dataset)?;
-        println!("Initial Cost: {}", initial_cost);
-
-        let start = std::time::Instant::now();
-        // Train for a few epochs
-        nn.learn(50000, &dataset, 1e0)?;
-        println!("Time Elapsed: {:?}", start.elapsed());
-
-        let final_cost = nn.cost(&dataset)?;
-        println!("Final Cost: {}", final_cost);
-        assert!(final_cost < initial_cost);
-
-        // Test predictions
-        (0..2).for_each(|i| {
-            (0..2).for_each(|j| {
-                let input = Matrix::from_vec2d(vec![vec![i as f32, j as f32]]).unwrap();
-                let output = nn.predict(&input).expect("Prediction failed");
-                println!("{} XOR {} = {}", i, j, output[(0, 0)]);
-                assert_eq!(output[(0, 0)].round(), (i ^ j) as f32);
-            });
-        });
-        assert!(false);
-        Ok(())
-    }
-
-    #[test]
-    fn test_binsum_nn() -> Result<(), Box<dyn std::error::Error>> {
-        // Create XOR training data using DataSet
-        let adder_data = Matrix::from_vec2d(vec![
-            vec![0.0, 0.0, 0.0, 0.0, 0.0],
-            vec![0.0, 0.0, 1.0, 1.0, 0.0],
-            vec![0.0, 1.0, 0.0, 1.0, 0.0],
-            vec![0.0, 1.0, 1.0, 0.0, 1.0],
-            vec![1.0, 0.0, 0.0, 1.0, 0.0],
-            vec![1.0, 0.0, 1.0, 0.0, 1.0],
-            vec![1.0, 1.0, 0.0, 0.0, 1.0],
-            vec![1.0, 1.0, 1.0, 1.0, 1.0],
-        ])
-        .unwrap();
-        let dataset = DataSet::new(adder_data, 3)?; // 3 input columns, 2 target columns
-
-        // Test predictions
-        let (inputs, targets) = (dataset.inputs_as_matrix().to_vec2d(), dataset.targets_as_matrix().to_vec2d());
-
-        let arch = Architecture {
-            inputs: dataset.stride,
-            layers: &[6],
-            outputs: dataset.data.cols - dataset.stride,
-        };
-        let mut nn = NeuralNetwork::new(arch, Activation::Sigmoid);
-        println!("Initialising parameters...");
-        nn.init_parameters(dataset.stride)?;
-
-        let initial_cost = nn.cost(&dataset)?;
-        println!("Initial Cost: {}", initial_cost);
-
-        let start = std::time::Instant::now();
-        nn.learn(50000, &dataset, 1e0)?;
-        let final_cost = nn.cost(&dataset)?;
-        println!("Time Elapsed: {:?}", start.elapsed());
-
-        println!("Final Cost: {}", final_cost);
-        assert!(final_cost < initial_cost);
-
-        for i in 0..inputs.len() {
-            let input = Matrix::from_vec2d(vec![inputs[i].clone()]).unwrap();
-            let output = nn.predict(&input)?;
-            println!(
-                "{} {} {} -> {} {}",
-                inputs[i][0],
-                inputs[i][1],
-                inputs[i][2],
-                output[(0, 0)],
-                output[(0, 1)]
-            );
-            assert_eq!(output[(0, 0)].round(), targets[i][0]);
-            assert_eq!(output[(0, 1)].round(), targets[i][1]);
-        }
-        assert!(false);
-        Ok(())
     }
 }

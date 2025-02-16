@@ -1,5 +1,6 @@
 use crate::matrix::{Matrix, MatrixError};
-use crate::nn::{Activation, Architecture, DataSet};
+use crate::nn::{Architecture, DataSet};
+use crate::nn::Activation;
 use rand::distributions::Distribution;
 
 pub struct NeuralNetworkMin {
@@ -307,11 +308,8 @@ impl NeuralNetworkMin {
         .unwrap();
         let ds = DataSet::new(adder_data, 3)?;
 
-        let arch = Architecture {
-            inputs: ds.stride,
-            layers: &[6],
-            outputs: ds.data.cols - ds.stride,
-        }; // NOTE: [2, 3, 1] - 1 hidden layers
+        // NOTE: [2, 3, 1] - 1 hidden layers
+        let arch = Architecture::with(ds.stride, &[6], ds.data.cols - ds.stride);
         let mut nn = NeuralNetworkMin::new(arch, Activation::Relu(1e-1));
         println!("Initialising parameters...");
         nn.init_parameters(ds.stride)?;
