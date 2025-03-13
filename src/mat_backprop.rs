@@ -73,7 +73,7 @@ impl NeuralNetworkMin {
 
     pub fn backpropagation(
         &mut self,
-        dataset: &DataSet,
+        dataset: &DataSet<f32>,
         learning_rate: f32,
     ) -> Result<(), MatrixError> {
         let inputs = dataset.inputs();
@@ -160,7 +160,7 @@ impl NeuralNetworkMin {
         Ok(())
     }
 
-    pub fn cost(&mut self, dataset: &DataSet) -> Result<f32, MatrixError> {
+    pub fn cost(&mut self, dataset: &DataSet<f32>) -> Result<f32, MatrixError> {
         let inputs = dataset.inputs();
         let targets = dataset.targets();
         let mut total_cost = 0.0;
@@ -180,7 +180,7 @@ impl NeuralNetworkMin {
 
     fn compute_numerical_gradient(
         &mut self,
-        dataset: &DataSet,
+        dataset: &DataSet<f32>,
         epsilon: f32,
     ) -> Result<(Vec<Matrix<f32>>, Vec<Matrix<f32>>), MatrixError> {
         let mut weight_gradients: Vec<Matrix<f32>> = self
@@ -238,7 +238,7 @@ impl NeuralNetworkMin {
 
     pub fn finite_diff(
         &mut self,
-        dataset: &DataSet,
+        dataset: &DataSet<f32>,
         learning_rate: f32,
     ) -> Result<(), MatrixError> {
         const EPSILON: f32 = 1e-1; // Small, stable perturbation

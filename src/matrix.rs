@@ -1,6 +1,6 @@
-use rand::Rng;
-use std::error::Error;
+use rand::{prelude::SliceRandom, Rng};
 use std::{
+    error::Error,
     fmt::{self, Debug, Display},
     ops::{Add, AddAssign, Div, Index, IndexMut, Mul, MulAssign, Sub, SubAssign},
 };
@@ -109,6 +109,20 @@ impl<T: MatrixElement> Matrix<T> {
             cols,
             elements: vec![T::default(); rows * cols],
         }
+    }
+
+    pub fn shuffle_rows(&mut self) {
+        let mut rng = rand::thread_rng();
+        let mut indices: Vec<usize> = (0..self.rows).collect();
+        indices.shuffle(&mut rng);
+
+        let mut new_elements = vec![T::default(); self.rows * self.cols];
+        for i in 0..self.rows {
+            for j in 0..self.cols {
+                new_elements[i * self.cols + j] = self.elements[indices[i] * self.cols + j];
+            }
+        }
+        self.elements = new_elements;
     }
 
     pub fn from_vec2d(elements: Vec<Vec<T>>) -> Result<Self, MatrixError> {
@@ -244,14 +258,6 @@ impl<T: MatrixElement> Matrix<T> {
             stride: self.cols,
             offset: index,
         }
-    }
-}
-
-impl<T: MatrixElement> Iterator for Matrix<T> {
-    type Item = T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.elements.pop()
     }
 }
 
@@ -423,9 +429,7 @@ impl<T: MatrixElement> Matrix<T> {
     // NOTE: DONE
     pub fn adjugate(&self) -> Result<Self, MatrixError> {
         if self.rows != self.cols {
-            return Err(MatrixError::InvalidOperation(
-                "Cannot compute adjugate of non-square matrix".to_string(),
-            ));
+            return Err(MatrixError::InvalidOperation("Cannot compute adjugate of non-square matrix".to_string()));
         }
 
         let mut result = Matrix::new(self.rows, self.cols);
@@ -433,11 +437,7 @@ impl<T: MatrixElement> Matrix<T> {
             for j in 0..self.cols {
                 let minor = self.minor(i, j)?;
                 let cofactor = minor.determinant()?;
-                result[(j, i)] = if (i + j) % 2 == 0 {
-                    cofactor
-                } else {
-                    T::zero() - cofactor
-                };
+                result[(j, i)] = if (i + j) % 2 == 0 { cofactor } else { T::zero() - cofactor };
             }
         }
         Ok(result)
@@ -446,16 +446,12 @@ impl<T: MatrixElement> Matrix<T> {
     // NOTE: DONE
     pub fn inverse(&self) -> Result<Self, MatrixError> {
         if self.rows != self.cols {
-            return Err(MatrixError::InvalidOperation(
-                "Cannot compute inverse of non-square matrix".to_string(),
-            ));
+            return Err(MatrixError::InvalidOperation("Cannot compute inverse of non-square matrix".to_string()));
         }
 
         let det = self.determinant()?;
         if det.is_zero() {
-            return Err(MatrixError::SingularMatrix(
-                "Matrix is singular (determinant is zero)".to_string(),
-            ));
+            return Err(MatrixError::SingularMatrix("Matrix is singular (determinant is zero)".to_string()));
         }
 
         let adj = self.adjugate()?;
@@ -504,9 +500,7 @@ impl<T: MatrixElement> Matrix<T> {
     // NOTE: DONE
     pub fn determinant_with_cofactors(&self) -> Result<(T, bool), MatrixError> {
         if self.rows != self.cols {
-            return Err(MatrixError::InvalidOperation(
-                "Matrix must be square to compute determinant".to_string(),
-            ));
+            return Err(MatrixError::InvalidOperation("Matrix must be square to compute determinant".to_string()));
         }
 
         match self.rows {
@@ -604,6 +598,21 @@ impl<'a, T: MatrixElement> MatrixView<'a, T> {
             offset: self.offset + row_start * self.stride + col_start,
         }
     }
+
+    pub fn max_index(&self) -> Option<usize> {
+        let mut max_index = 0;
+        let mut max_val: Option<&T> = None;
+
+        for i in 0..self.cols {
+            let val = self.get(i)?;
+            if max_val.is_none() || *val > *max_val.unwrap() {
+                max_val = Some(val);
+                max_index = i;
+            }
+        }
+
+        Some(max_index)
+    }
 }
 
 impl<'a, T: MatrixElement> MatrixViewMut<'a, T> {
@@ -641,13 +650,7 @@ impl<'a, T: MatrixElement> MatrixViewMut<'a, T> {
         }
     }
 
-    pub fn submatrix_mut<'b: 'a>(
-        &'b mut self,
-        row_start: usize,
-        col_start: usize,
-        rows: usize,
-        cols: usize,
-    ) -> Result<Self, MatrixError> {
+    pub fn submatrix_mut<'b: 'a>(&'b mut self, row_start: usize, col_start: usize, rows: usize, cols: usize) -> Result<Self, MatrixError> {
         // assert!(row_start + rows <= self.rows);
         // assert!(col_start + cols <= self.cols);
 
@@ -688,10 +691,146 @@ impl<'a, T: MatrixElement> MatrixViewMut<'a, T> {
 
         for row in 0..self.rows {
             for col in 0..self.cols {
-                self.elements[row * self.stride + col + self.offset] =
-                    other.elements[row * other.stride + col + other.offset];
+                self.elements[row * self.stride + col + self.offset] = other.elements[row * other.stride + col + other.offset];
             }
         }
+    }
+}
+
+impl<T: MatrixElement> Matrix<T>
+where
+    T: Into<f32> + From<f32>,
+{
+    /// Add a row to the matrix
+    pub fn push_row(&mut self, row: &[T]) -> Result<(), MatrixError> {
+        if row.len() != self.cols {
+            return Err(MatrixError::DimensionMismatch(format!(
+                "Row length {} doesn't match matrix columns {}",
+                row.len(),
+                self.cols
+            )));
+        }
+
+        self.elements.extend_from_slice(row);
+        self.rows += 1;
+        Ok(())
+    }
+
+    /// Create a mesh grid for decision boundary visualization
+    pub fn meshgrid(x_range: std::ops::Range<f32>, x_steps: usize, y_range: std::ops::Range<f32>, y_steps: usize) -> Result<Self, MatrixError> {
+        let mut elements = Vec::new();
+        let x_step = (x_range.end - x_range.start) / x_steps as f32;
+        let y_step = (y_range.end - y_range.start) / y_steps as f32;
+
+        for i in 0..x_steps {
+            let x = x_range.start + i as f32 * x_step;
+            for j in 0..y_steps {
+                let y = y_range.start + j as f32 * y_step;
+                elements.push(T::from(x));
+                elements.push(T::from(y));
+            }
+        }
+
+        Ok(Matrix {
+            rows: x_steps * y_steps,
+            cols: 2,
+            elements,
+        })
+    }
+
+    /// Apply threshold to create binary matrix
+    pub fn threshold(&self, cutoff: f32) -> Result<Self, MatrixError> {
+        let mut result = self.clone();
+        for element in &mut result.elements {
+            let val: f32 = (*element).into();
+            *element = T::from(if val >= cutoff { 1.0 } else { 0.0 });
+        }
+        Ok(result)
+    }
+
+    /// Convert class labels to one-hot encoding
+    pub fn one_hot_encode(&self, num_classes: usize) -> Result<Self, MatrixError> {
+        if self.cols != 1 {
+            return Err(MatrixError::InvalidOperation("One-hot encoding requires single-column matrix".into()));
+        }
+
+        let mut encoded = Matrix::new(self.rows, num_classes);
+        for (row, class) in self.elements.iter().enumerate() {
+            let class_idx: usize = (*class).into() as usize;
+            if class_idx >= num_classes {
+                return Err(MatrixError::InvalidOperation(format!(
+                    "Class index {} exceeds num_classes {}",
+                    class_idx, num_classes
+                )));
+            }
+            encoded[(row, class_idx)] = T::one();
+        }
+        Ok(encoded)
+    }
+
+    /// Normalize specified columns to [0, 1] range
+    pub fn normalize_columns(&mut self, columns: std::ops::Range<usize>) -> Result<(), MatrixError> {
+        for col in columns {
+            if col >= self.cols {
+                return Err(MatrixError::IndexOutOfBounds(format!(
+                    "Column {} out of bounds for {} columns",
+                    col, self.cols
+                )));
+            }
+
+            let (min, max) = self.col_min_max(col)?;
+            let range = max - min;
+
+            if range == T::zero() {
+                // Handle constant columns
+                for row in 0..self.rows {
+                    self[(row, col)] = T::zero();
+                }
+                continue;
+            }
+
+            for row in 0..self.rows {
+                let val = self[(row, col)];
+                let normalized = (val - min) / range;
+                self[(row, col)] = normalized;
+            }
+        }
+        Ok(())
+    }
+
+    // Helper function for normalization
+    fn col_min_max(&self, col: usize) -> Result<(T, T), MatrixError> {
+        if self.rows == 0 {
+            return Err(MatrixError::InvalidOperation("Empty matrix has no min/max".into()));
+        }
+
+        let mut min = self[(0, col)];
+        let mut max = self[(0, col)];
+
+        for row in 0..self.rows {
+            let val = self[(row, col)];
+            if val < min {
+                min = val;
+            }
+            if val > max {
+                max = val;
+            }
+        }
+
+        Ok((min, max))
+    }
+
+    /// Find index of maximum element in a row
+    pub fn max_index(&self) -> Option<usize> {
+        if self.rows != 1 {
+            return None;
+        }
+
+        self.elements
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(i, _)| i)
     }
 }
 
@@ -888,12 +1027,7 @@ mod tests {
 
     #[test]
     fn test_matrix_views() {
-        let mut m = Matrix::from_vec2d(vec![
-            vec![1.0, 2.0, 3.0],
-            vec![4.0, 5.0, 6.0],
-            vec![7.0, 8.0, 9.0],
-        ])
-        .unwrap();
+        let mut m = Matrix::from_vec2d(vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0], vec![7.0, 8.0, 9.0]]).unwrap();
 
         // Test row view
         let row = m.row(1);

@@ -1,14 +1,13 @@
-use crate::matrix::Matrix;
+use crate::matrix::{Matrix, MatrixElement};
 use crate::nn::error::NNError;
 
-#[derive(Debug, Default)]
-pub struct DataSet {
-    pub data: Matrix<f32>,
+pub struct DataSet<T: MatrixElement> {
+    pub data: Matrix<T>,
     pub stride: usize,
 }
 
-impl DataSet {
-    pub fn new(data: Matrix<f32>, stride: usize) -> Result<Self, NNError> {
+impl<T: MatrixElement> DataSet<T> {
+    pub fn new(data: Matrix<T>, stride: usize) -> Result<Self, NNError> {
         if stride >= data.cols {
             return Err(NNError::DataSetError {
                 msg: "Stride cannot be greater than the total columns".to_string(),
@@ -19,7 +18,7 @@ impl DataSet {
         Ok(Self { data, stride })
     }
 
-    pub fn inputs(&self) -> Vec<Matrix<f32>> {
+    pub fn inputs(&self) -> Vec<Matrix<T>> {
         let mut inputs = Vec::new();
         for i in 0..self.data.rows {
             let mut inp_row = Vec::new();
@@ -31,7 +30,7 @@ impl DataSet {
         inputs
     }
 
-    pub fn inputs_as_matrix(&self) -> Matrix<f32> {
+    pub fn inputs_as_matrix(&self) -> Matrix<T> {
         let inputs = self.inputs();
         inputs.iter().fold(Matrix::new(0, inputs[0].cols), |mut acc, x| {
             acc.vstack(x).expect("Matrix stacking failed");
@@ -39,7 +38,7 @@ impl DataSet {
         })
     }
 
-    pub fn targets(&self) -> Vec<Matrix<f32>> {
+    pub fn targets(&self) -> Vec<Matrix<T>> {
         let mut targets = Vec::new();
         for i in 0..self.data.rows {
             let mut target_row = Vec::new();
@@ -51,16 +50,27 @@ impl DataSet {
         targets
     }
 
-    pub fn targets_as_matrix(&self) -> Matrix<f32> {
+    pub fn targets_as_matrix(&self) -> Matrix<T> {
         let targets = self.targets();
         targets.iter().fold(Matrix::new(0, targets[0].cols), |mut acc, x| {
             acc.vstack(x).expect("Matrix stacking failed");
             acc
         })
     }
+
+    pub fn one_hot_encode(&self, num_classes: usize) -> Result<Matrix<T>, NNError>
+    where
+        T: From<f32> + Into<f32>,
+    {
+        let targets = self.targets_as_matrix();
+        targets.one_hot_encode(num_classes).map_err(|e| NNError::MatrixError {
+            msg: e.to_string(),
+            operation: "one-hot encoding".into(),
+        })
+    }
 }
 
-impl std::fmt::Display for DataSet {
+impl<T: MatrixElement> std::fmt::Display for DataSet<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "DataSet {{\n")?;
         // [[inputs], [targets]] based on stride

@@ -1,5 +1,5 @@
 use crate::{
-    matrix::Matrix,
+    matrix::{Matrix, MatrixElement},
     nn::{dataset::DataSet, error::NNError},
 };
 use rand::distributions::Distribution;
@@ -196,7 +196,7 @@ impl NeuralNetwork {
         Ok(())
     }
 
-    pub fn cost(&mut self, dataset: &DataSet) -> Result<f32, NNError> {
+    pub fn cost(&mut self, dataset: &DataSet<f32>) -> Result<f32, NNError> {
         let inputs = dataset.inputs();
         let targets = dataset.targets();
         let mut total_cost = 0.0;
@@ -222,7 +222,7 @@ impl NeuralNetwork {
         &mut self,
         weight_gradients: &mut Vec<Matrix<f32>>,
         bias_gradients: &mut Vec<Matrix<f32>>,
-        dataset: &DataSet,
+        dataset: &DataSet<f32>,
         learning_rate: f32,
     ) -> Result<(), NNError> {
         let inputs = dataset.inputs();
@@ -366,12 +366,15 @@ impl NeuralNetwork {
         Ok(())
     }
 
-    pub fn learn(&mut self, epochs: usize, dataset: &DataSet, learning_rate: f32) -> Result<(), NNError> {
+    pub fn learn(&mut self, epochs: usize, dataset: &DataSet<f32>, learning_rate: f32) -> Result<(), NNError> {
         let mut weight_gradients: Vec<Matrix<f32>> = self.weights.iter().map(|w| Matrix::new(w.rows, w.cols)).collect();
         let mut bias_gradients: Vec<Matrix<f32>> = self.biases.iter().map(|b| Matrix::new(b.rows, b.cols)).collect();
 
-        for _ in 0..epochs {
+        for i in 0..epochs {
             self.backpropagation(&mut weight_gradients, &mut bias_gradients, dataset, learning_rate)?;
+            if i % 1000 == 0 {
+                println!("Cost: {}", self.cost(dataset)?);
+            }
         }
         Ok(())
     }

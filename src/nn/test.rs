@@ -35,7 +35,6 @@ fn test_bin_op_nn() -> Result<(), Box<dyn std::error::Error>> {
             assert_eq!(output[(0, 0)].round(), (i ^ j) as f32);
         });
     });
-    assert!(false);
     Ok(())
 }
 
@@ -59,7 +58,7 @@ fn test_binsum_nn() -> Result<(), Box<dyn std::error::Error>> {
     let (inputs, targets) = (dataset.inputs_as_matrix().to_vec2d(), dataset.targets_as_matrix().to_vec2d());
 
     let arch = Architecture::with(dataset.stride, &[6], dataset.data.cols - dataset.stride);
-    let mut nn = NeuralNetwork::new(arch, Activation::Sigmoid)?;
+    let mut nn = NeuralNetwork::new(arch, Activation::Tanh)?;
     println!("Initialising parameters...");
     nn.init_parameters(dataset.stride)?;
 
@@ -67,7 +66,7 @@ fn test_binsum_nn() -> Result<(), Box<dyn std::error::Error>> {
     println!("Initial Cost: {}", initial_cost);
 
     let start = std::time::Instant::now();
-    nn.learn(50000, &dataset, 1e0)?;
+    nn.learn(1000, &dataset, 1e0)?;
     let final_cost = nn.cost(&dataset)?;
     println!("Time Elapsed: {:?}", start.elapsed());
 
@@ -88,6 +87,6 @@ fn test_binsum_nn() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(output[(0, 0)].round(), targets[i][0]);
         assert_eq!(output[(0, 1)].round(), targets[i][1]);
     }
-    assert!(false);
+    // assert!(false);
     Ok(())
 }
